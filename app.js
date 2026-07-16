@@ -6,7 +6,9 @@ const bodyParser = require('body-parser');
 
 const User = require('./models/User');
 const Meeting = require('./models/Meeting');
-
+// Add this near your other middleware in app.js
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes);
 const app = express();
 app.use(bodyParser.json());
 app.use(express.static('public')); // Place your index.html in a 'public' folder
