@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Meeting Platform — Login</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-box">
+      <h1>🏢 Company Meeting Platform</h1>
+      <form id="loginForm">
+        <label>Email</label>
+        <input type="email" id="email" required placeholder="you@company.com">
+        <label>Password</label>
+        <input type="password" id="password" required placeholder="••••••••">
+        <div style="margin-top:18px;">
+          <button class="btn btn-primary" type="submit" style="width:100%;">Log In</button>
+        </div>
+        <div class="error-msg" id="errorMsg"></div>
+      </form>
+    </div>
+  </div>
+
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errorMsg = document.getElementById('errorMsg');
+  errorMsg.textContent = '';
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorMsg.textContent = data.error || 'Login failed';
+      return;
+    }
+    const role = data.user.role;
+    if (role === 'superadmin') window.location.href = '/superadmin.html';
+    else if (role === 'dept_admin') window.location.href = '/deptadmin.html';
+    else window.location.href = '/employee.html';
+  } catch (err) {
+    errorMsg.textContent = 'Server error. Please try again.';
+  }
+});
+</script>
+</body>
+</html>

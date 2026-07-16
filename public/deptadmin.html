@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Department Admin Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="topbar">
+    <h1 id="pageTitle">Department Admin <span class="role-badge">DEPT ADMIN</span></h1>
+    <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+  </div>
+
+  <div class="container">
+    <div class="grid-2">
+      <div class="card">
+        <h2 id="formTitle">📅 Schedule a Meeting</h2>
+        <form id="meetingForm">
+          <input type="hidden" id="meetingId">
+          <label>Title</label>
+          <input type="text" id="title" required>
+          <label>Description</label>
+          <textarea id="description"></textarea>
+          <label>Date</label>
+          <input type="date" id="date" required>
+          <label>Time</label>
+          <input type="time" id="time" required>
+          <label>Invite Employees</label>
+          <div class="checkbox-list" id="employeeCheckboxes"></div>
+          <div style="margin-top:14px; display:flex; gap:8px;">
+            <button class="btn btn-primary" type="submit" id="submitBtn">Create Meeting</button>
+            <button class="btn btn-secondary" type="button" id="cancelEditBtn" style="display:none;" onclick="resetForm()">Cancel Edit</button>
+          </div>
+          <div class="error-msg" id="formError"></div>
+          <div class="success-msg" id="formSuccess"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>👥 Employees in My Department</h2>
+        <div id="employeesList"><p class="empty-state">Loading...</p></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📋 My Department's Meetings</h2>
+      <div id="meetingsList"><p class="empty-state">Loading...</p></div>
+    </div>
+  </div>
+
+<script src="common.js"></script>
+<script>
+let employees = [];
+
+async function init() {
+  const user = await requireAuth('dept_admin');
+  if (!user) return;
+  document.getElementById('pageTitle').innerHTML = `${escapeHtml(user.name)}'s Dashboard <span class="role-badge">DEPT ADMIN</span>`;
+
+  await loadEmployees();
+  await loadMeetings();
+}
+
+async function loadEmployees() {
+  const { employees: emps } = await apiGet('/api/employees');
+  employees = emps;
+
+  const cbEl = document.getElementById('employeeCheckboxes');
+  if (employees.length === 0) {
+    cbEl.innerHTML = '<p class="empty-state">No employees yet. Ask the Super Admin to create some.</p>';
+  } else {
+    cbEl.innerHTML = employees.map(e => `
+      <label><input type="checkbox" value="${e.id}" class="empCheckbox"> ${escapeHtml(e.name)} (${escapeHtml(e.email)})</label>
+    `).join('');
+  }
+
+  const listEl = document.getElementById('employeesList');
+  listEl.innerHTML = employees.length === 0
+    ? '<p class="empty-state">No employees in your department yet.</p>'
+    : `<table><thead><tr><th>Name</th><th>Email</th></tr></thead><tbody>
+        ${employees.map(e => `<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.email)}</td></tr>`).join('')}
+      </tbody></table>`;
+}
+
+async function loadMeetings() {
+  const { meetings } = await apiGet('/api/meetings/department');
+  const el = document.getElementById('meetingsList');
+  if (meetings.length === 0) { el.innerHTML = '<p class="empty-state">No meetings scheduled yet.</p>'; return; }
+
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Date</th><th>Time</th><th>Participants</th><th></th></tr></thead>
+    <tbody>
+      ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
+        <tr>
+          <td>${escapeHtml(m.title)}</td>
+          <td>${m.date}</td>
+          <td>${m.time}</td>
+          <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+          <td class="actions-row">
+            <button class="btn btn-secondary" style="padding:5px 10px;" onclick='editMeeting(${JSON.stringify(m).replace(/'/g,"&#39;")})'>Edit</button>
+            <button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteMeeting('${m.id}')">Delete</button>
+          </td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+
+function editMeeting(m) {
+  document.getElementById('formTitle').textContent = '✏️ Edit Meeting';
+  document.getElementById('submitBtn').textContent = 'Save Changes';
+  document.getElementById('cancelEditBtn').style.display = 'inline-block';
+  document.getElementById('meetingId').value = m.id;
+  document.getElementById('title').value = m.title;
+  document.getElementById('description').value = m.description;
+  document.getElementById('date').value = m.date;
+  document.getElementById('time').value = m.time;
+  document.querySelectorAll('.empCheckbox').forEach(cb => {
+    cb.checked = m.participantIds.includes(cb.value);
+  });
+  window.scrollTo(0, 0);
+}
+
+function resetForm() {
+  document.getElementById('formTitle').textContent = '📅 Schedule a Meeting';
+  document.getElementById('submitBtn').textContent = 'Create Meeting';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+  document.getElementById('meetingForm').reset();
+  document.getElementById('meetingId').value = '';
+}
+
+async function deleteMeeting(id) {
+  if (!confirm('Delete this meeting?')) return;
+  await apiDelete('/api/meetings/' + id);
+  await loadMeetings();
+}
+
+document.getElementById('meetingForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const formError = document.getElementById('formError');
+  const formSuccess = document.getElementById('formSuccess');
+  formError.textContent = ''; formSuccess.textContent = '';
+
+  const participantIds = Array.from(document.querySelectorAll('.empCheckbox:checked')).map(cb => cb.value);
+  const payload = {
+    title: document.getElementById('title').value,
+    description: document.getElementById('description').value,
+    date: document.getElementById('date').value,
+    time: document.getElementById('time').value,
+    participantIds
+  };
+
+  try {
+    const id = document.getElementById('meetingId').value;
+    if (id) {
+      await apiPut('/api/meetings/' + id, payload);
+      formSuccess.textContent = 'Meeting updated!';
+    } else {
+      await apiPost('/api/meetings', payload);
+      formSuccess.textContent = 'Meeting created!';
+    }
+    resetForm();
+    await loadMeetings();
+  } catch (err) {
+    formError.textContent = err.message;
+  }
+});
+
+init();
+</script>
+</body>
+</html>

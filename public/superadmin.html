@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Super Admin Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="topbar">
+    <h1>🏢 Super Admin Dashboard <span class="role-badge">SUPER ADMIN</span></h1>
+    <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+  </div>
+
+  <div class="container">
+    <div class="grid-2">
+      <div class="card">
+        <h2>➕ Create New Account</h2>
+        <form id="createUserForm">
+          <label>Full Name</label>
+          <input type="text" id="newName" required>
+          <label>Email</label>
+          <input type="email" id="newEmail" required>
+          <label>Temporary Password</label>
+          <input type="text" id="newPassword" required minlength="6">
+          <label>Role</label>
+          <select id="newRole">
+            <option value="dept_admin">Department Admin</option>
+            <option value="employee">Employee</option>
+          </select>
+          <label>Department</label>
+          <select id="newDept"></select>
+          <div style="margin-top:14px;">
+            <button class="btn btn-primary" type="submit">Create Account</button>
+          </div>
+          <div class="error-msg" id="createError"></div>
+          <div class="success-msg" id="createSuccess"></div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>📋 All Accounts</h2>
+        <div id="usersList"><p class="empty-state">Loading...</p></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>📅 All Meetings (Every Department)</h2>
+      <div id="meetingsList"><p class="empty-state">Loading...</p></div>
+    </div>
+  </div>
+
+<script src="common.js"></script>
+<script>
+let departments = [];
+
+async function init() {
+  const user = await requireAuth('superadmin');
+  if (!user) return;
+
+  const dRes = await apiGet('/api/departments');
+  departments = dRes.departments;
+  const sel = document.getElementById('newDept');
+  sel.innerHTML = departments.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+
+  await loadUsers();
+  await loadMeetings();
+}
+
+async function loadUsers() {
+  const { users } = await apiGet('/api/users');
+  const el = document.getElementById('usersList');
+  if (users.length === 0) { el.innerHTML = '<p class="empty-state">No accounts yet.</p>'; return; }
+
+  el.innerHTML = `<table>
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th></th></tr></thead>
+    <tbody>
+      ${users.filter(u => u.role !== 'superadmin').map(u => {
+        const dept = departments.find(d => d.id === u.departmentId);
+        return `<tr>
+          <td>${escapeHtml(u.name)}</td>
+          <td>${escapeHtml(u.email)}</td>
+          <td><span class="tag">${u.role === 'dept_admin' ? 'Dept Admin' : 'Employee'}</span></td>
+          <td>${dept ? escapeHtml(dept.name) : '-'}</td>
+          <td><button class="btn btn-danger" style="padding:5px 10px;" onclick="removeUser('${u.id}')">Delete</button></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function removeUser(id) {
+  if (!confirm('Delete this account? This cannot be undone.')) return;
+  await apiDelete('/api/users/' + id);
+  await loadUsers();
+}
+
+async function loadMeetings() {
+  const { meetings } = await apiGet('/api/meetings/all');
+  const el = document.getElementById('meetingsList');
+  if (meetings.length === 0) { el.innerHTML = '<p class="empty-state">No meetings scheduled yet.</p>'; return; }
+
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Department</th><th>Date</th><th>Time</th><th>Organizer</th><th>Participants</th></tr></thead>
+    <tbody>
+      ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
+        <tr>
+          <td>${escapeHtml(m.title)}</td>
+          <td>${escapeHtml(m.departmentName)}</td>
+          <td>${m.date}</td>
+          <td>${m.time}</td>
+          <td>${escapeHtml(m.createdByName)}</td>
+          <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+
+document.getElementById('createUserForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const createError = document.getElementById('createError');
+  const createSuccess = document.getElementById('createSuccess');
+  createError.textContent = ''; createSuccess.textContent = '';
+
+  try {
+    await apiPost('/api/users', {
+      name: document.getElementById('newName').value,
+      email: document.getElementById('newEmail').value,
+      password: document.getElementById('newPassword').value,
+      role: document.getElementById('newRole').value,
+      departmentId: document.getElementById('newDept').value
+    });
+    createSuccess.textContent = 'Account created successfully!';
+    document.getElementById('createUserForm').reset();
+    await loadUsers();
+  } catch (err) {
+    createError.textContent = err.message;
+  }
+});
+
+init();
+</script>
+</body>
+</html>

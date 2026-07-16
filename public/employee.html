@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>My Meetings</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="topbar">
+    <h1 id="pageTitle">My Dashboard <span class="role-badge">EMPLOYEE</span></h1>
+    <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>📅 My Upcoming & Past Meetings</h2>
+      <div id="meetingsList"><p class="empty-state">Loading...</p></div>
+    </div>
+  </div>
+
+<script src="common.js"></script>
+<script>
+async function init() {
+  const user = await requireAuth('employee');
+  if (!user) return;
+  document.getElementById('pageTitle').innerHTML = `${escapeHtml(user.name)}'s Dashboard <span class="role-badge">EMPLOYEE</span>`;
+
+  const { meetings } = await apiGet('/api/meetings/mine');
+  const el = document.getElementById('meetingsList');
+  if (meetings.length === 0) {
+    el.innerHTML = '<p class="empty-state">You have no meetings scheduled yet.</p>';
+    return;
+  }
+
+  el.innerHTML = `<table>
+    <thead><tr><th>Title</th><th>Description</th><th>Date</th><th>Time</th><th>Organizer</th><th>Other Participants</th></tr></thead>
+    <tbody>
+      ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
+        <tr>
+          <td>${escapeHtml(m.title)}</td>
+          <td>${escapeHtml(m.description || '-')}</td>
+          <td>${m.date}</td>
+          <td>${m.time}</td>
+          <td>${escapeHtml(m.createdByName)}</td>
+          <td>${m.participants.filter(p => p.name !== undefined).map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+init();
+</script>
+</body>
+</html>

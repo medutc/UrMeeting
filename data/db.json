@@ -1,0 +1,51 @@
+{
+  "departments": [
+    {
+      "id": "operations",
+      "name": "Operations"
+    },
+    {
+      "id": "sales_marketing",
+      "name": "Sales & Marketing"
+    },
+    {
+      "id": "supply_chain",
+      "name": "Supply Chain & Logistics"
+    },
+    {
+      "id": "finance",
+      "name": "Finance"
+    },
+    {
+      "id": "hr",
+      "name": "Human Resources"
+    }
+  ],
+  "users": [
+    {
+      "id": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "name": "Super Admin",
+      "email": "admin@company.com",
+      "password": "$2a$10$zEDKPqaiw5KKwd1IyWNIIeIpw8qgLeb2XWfSby4yot7YH7zVi5oVG",
+      "role": "superadmin",
+      "departmentId": null
+    },
+    {
+      "id": "69da17fd-011e-45da-899f-25ce636dc148",
+      "name": "Med Moataz",
+      "email": "medmoataz01@gmail.com",
+      "password": "$2a$10$HeQTdLLmh9xC/4qioGeFIO14dt7dsO9h2JYjIPeEfUeweOY2iS2Cu",
+      "role": "dept_admin",
+      "departmentId": "operations"
+    },
+    {
+      "id": "f202b94b-090d-44fb-ab90-03ac392361b4",
+      "name": "Tarzi Ilyas",
+      "email": "tarzi@gmail.com",
+      "password": "$2a$10$qltVeHiamldD0UVxt5pN4uIAzIXQAEMexxXCPPRI/aMjOBhwmpAqO",
+      "role": "employee",
+      "departmentId": "operations"
+    }
+  ],
+  "meetings": []
+}
