@@ -14,7 +14,9 @@ app.use(bodyParser.json());
 app.use(express.static('public')); // Place your index.html in a 'public' folder
 
 const SECRET_KEY = "urmeeting_super_secret_key"; 
-
+// Add this to your app.js file, right below your auth routes
+const meetingRoutes = require('./routes/meetings');
+app.use('/api/meetings', meetingRoutes);
 // Connect to MongoDB
 mongoose.connect('mongodb://localhost:27017/urmeeting')
   .then(() => console.log("Connected to MongoDB"))
