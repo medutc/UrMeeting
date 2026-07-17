@@ -47,5 +47,19 @@
       "departmentId": "operations"
     }
   ],
-  "meetings": []
+  "meetings": [
+    {
+      "id": "a5b9d12d-9468-42fa-a7d5-b88acfbc62d7",
+      "title": "meet me ",
+      "description": "description",
+      "date": "2026-07-17",
+      "time": "08:42",
+      "departmentId": "operations",
+      "createdBy": "69da17fd-011e-45da-899f-25ce636dc148",
+      "participantIds": [
+        "f202b94b-090d-44fb-ab90-03ac392361b4"
+      ],
+      "createdAt": "2026-07-17T07:39:16.180Z"
+    }
+  ]
 }
