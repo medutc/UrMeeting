@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const session = require('express-session');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
@@ -7,6 +9,8 @@ const path = require('path');
 const db = require('./db');
 
 const app = express();
+const httpServer = http.createServer(app);
+const io = new Server(httpServer);
 const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
@@ -226,6 +230,22 @@ app.delete('/api/meetings/:id', requireLogin, requireRole('dept_admin'), (req, r
   res.json({ ok: true });
 });
 
+// Get a single meeting — used by the meeting room page. Access allowed for:
+// the dept_admin who created it, any invited employee, or the superadmin.
+app.get('/api/meetings/:id', requireLogin, (req, res) => {
+  const meeting = db.get('meetings').find({ id: req.params.id }).value();
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
+  const user = db.get('users').find({ id: req.session.userId }).value();
+  const allowed = user.role === 'superadmin' ||
+    meeting.createdBy === user.id ||
+    meeting.participantIds.includes(user.id);
+
+  if (!allowed) return res.status(403).json({ error: 'You are not invited to this meeting' });
+
+  res.json({ meeting: enrichMeetings([meeting])[0] });
+});
+
 function enrichMeetings(meetings) {
   const users = db.get('users').value();
   const depts = db.get('departments').value();
@@ -240,6 +260,60 @@ function enrichMeetings(meetings) {
   }));
 }
 
-app.listen(PORT, () => {
+// ---------- Socket.io: WebRTC signaling + live chat ----------
+// Rooms are keyed by meetingId. Every socket that joins must belong to that
+// meeting (creator, invited employee, or superadmin) — verified server-side.
+io.on('connection', (socket) => {
+  socket.on('join-room', ({ meetingId, userId }) => {
+    const meeting = db.get('meetings').find({ id: meetingId }).value();
+    const user = db.get('users').find({ id: userId }).value();
+    if (!meeting || !user) return socket.emit('join-error', 'Meeting or user not found');
+
+    const allowed = user.role === 'superadmin' ||
+      meeting.createdBy === user.id ||
+      meeting.participantIds.includes(user.id);
+    if (!allowed) return socket.emit('join-error', 'You are not invited to this meeting');
+
+    socket.data.meetingId = meetingId;
+    socket.data.userId = user.id;
+    socket.data.name = user.name;
+
+    // Tell the new socket who is already in the room
+    const room = io.sockets.adapter.rooms.get(meetingId) || new Set();
+    const existingUsers = Array.from(room).map(sid => {
+      const s = io.sockets.sockets.get(sid);
+      return { socketId: sid, userId: s.data.userId, name: s.data.name };
+    });
+    socket.emit('existing-users', existingUsers);
+
+    socket.join(meetingId);
+    socket.to(meetingId).emit('user-joined', { socketId: socket.id, userId: user.id, name: user.name });
+  });
+
+  // WebRTC signaling relay (offer / answer / ICE candidates)
+  socket.on('signal', ({ to, data }) => {
+    io.to(to).emit('signal', { from: socket.id, name: socket.data.name, data });
+  });
+
+  socket.on('chat-message', ({ meetingId, text }) => {
+    if (!meetingId || !text) return;
+    io.to(meetingId).emit('chat-message', {
+      from: socket.data.userId,
+      name: socket.data.name || 'Unknown',
+      text: String(text).slice(0, 2000),
+      time: new Date().toISOString()
+    });
+  });
+
+  socket.on('disconnecting', () => {
+    for (const room of socket.rooms) {
+      if (room !== socket.id) {
+        socket.to(room).emit('user-left', { socketId: socket.id, userId: socket.data.userId, name: socket.data.name });
+      }
+    }
+  });
+});
+
+httpServer.listen(PORT, () => {
   console.log(`Meeting platform running at http://localhost:${PORT}`);
 });

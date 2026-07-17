@@ -7,7 +7,10 @@
 </head>
 <body>
   <div class="topbar">
-    <h1 id="pageTitle">My Dashboard <span class="role-badge">EMPLOYEE</span></h1>
+    <h1 class="topbar-title">
+    <img src="images/UrMeetingLogo.png" alt="UrMeeting Logo" class="topbar-logo">
+    My Dashboard <span class="role-badge">EMPLOYEE</span>
+  </h1>
     <button class="btn btn-secondary" onclick="logout()">Log Out</button>
   </div>
 
@@ -33,7 +36,7 @@ async function init() {
   }
 
   el.innerHTML = `<table>
-    <thead><tr><th>Title</th><th>Description</th><th>Date</th><th>Time</th><th>Organizer</th><th>Other Participants</th></tr></thead>
+    <thead><tr><th>Title</th><th>Description</th><th>Date</th><th>Time</th><th>Organizer</th><th>Other Participants</th><th></th></tr></thead>
     <tbody>
       ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
         <tr>
@@ -43,6 +46,7 @@ async function init() {
           <td>${m.time}</td>
           <td>${escapeHtml(m.createdByName)}</td>
           <td>${m.participants.filter(p => p.name !== undefined).map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+          <td><a class="btn btn-primary" style="padding:5px 12px; text-decoration:none; display:inline-block;" href="/meeting-room.html?id=${m.id}">Join</a></td>
         </tr>
       `).join('')}
     </tbody>

@@ -7,8 +7,11 @@
 </head>
 <body>
   <div class="topbar">
-    <h1>🏢 Super Admin Dashboard <span class="role-badge">SUPER ADMIN</span></h1>
-    <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+<h1 class="topbar-title">
+    <img src="images/UrMeetingLogo.png" alt="UrMeeting Logo" class="topbar-logo">
+    Super Admin Dashboard <span class="role-badge">SUPER ADMIN</span>
+  </h1>
+      <button class="btn btn-secondary" onclick="logout()">Log Out</button>
   </div>
 
   <div class="container">
@@ -100,7 +103,7 @@ async function loadMeetings() {
   if (meetings.length === 0) { el.innerHTML = '<p class="empty-state">No meetings scheduled yet.</p>'; return; }
 
   el.innerHTML = `<table>
-    <thead><tr><th>Title</th><th>Department</th><th>Date</th><th>Time</th><th>Organizer</th><th>Participants</th></tr></thead>
+    <thead><tr><th>Title</th><th>Department</th><th>Date</th><th>Time</th><th>Organizer</th><th>Participants</th><th></th></tr></thead>
     <tbody>
       ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
         <tr>
@@ -110,6 +113,7 @@ async function loadMeetings() {
           <td>${m.time}</td>
           <td>${escapeHtml(m.createdByName)}</td>
           <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+          <td><a class="btn btn-primary" style="padding:5px 12px; text-decoration:none; display:inline-block;" href="/meeting-room.html?id=${m.id}">Join</a></td>
         </tr>
       `).join('')}
     </tbody>

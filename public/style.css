@@ -6,7 +6,7 @@ body {
   color: #1f2937;
 }
 .topbar {
-  background: #1e293b;
+  background: #364050;
   color: #fff;
   padding: 14px 24px;
   display: flex;
@@ -76,7 +76,7 @@ th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b
 }
 .login-box {
   background: #fff;
-  padding: 80px;
+  padding: 50px;
   border-radius: 12px;
   width: 500px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
@@ -88,3 +88,21 @@ th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b
 .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #e0e7ff; color: #3730a3; }
 .actions-row { display: flex; gap: 8px; }
 .empty-state { color: #9ca3af; font-size: 14px; padding: 12px 0; }
+.platform-logo {
+  max-width: 200px; /* Adjust this value up or down based on your logo's actual dimensions */
+  height: auto;
+  display: block;
+  margin: 0 auto 24px auto; /* Centers the logo horizontally and adds space below it */
+}
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 12px; /* Adds a nice, consistent space between the logo and the text */
+  margin: 0;
+}
+
+.topbar-logo {
+  height: 52px; /* Restricts the logo height so it fits nicely in the header */
+  width: auto;
+  object-fit: contain;
+}

@@ -7,8 +7,11 @@
 </head>
 <body>
   <div class="topbar">
-    <h1 id="pageTitle">Department Admin <span class="role-badge">DEPT ADMIN</span></h1>
-    <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+<h1 class="topbar-title">
+    <img src="images/UrMeetingLogo.png" alt="UrMeeting Logo" class="topbar-logo">
+    Department Admin <span class="role-badge">DEPT ADMIN</span>
+  </h1>
+      <button class="btn btn-secondary" onclick="logout()">Log Out</button>
   </div>
 
   <div class="container">
@@ -97,6 +100,7 @@ async function loadMeetings() {
           <td>${m.time}</td>
           <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
           <td class="actions-row">
+            <a class="btn btn-primary" style="padding:5px 10px; text-decoration:none;" href="/meeting-room.html?id=${m.id}">Join</a>
             <button class="btn btn-secondary" style="padding:5px 10px;" onclick='editMeeting(${JSON.stringify(m).replace(/'/g,"&#39;")})'>Edit</button>
             <button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteMeeting('${m.id}')">Delete</button>
           </td>
