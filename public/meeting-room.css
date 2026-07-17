@@ -12,8 +12,7 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 .room-header h1 { font-size: 16px; margin: 0; }
 .room-header .sub { font-size: 12px; color: #9ca3af; }
 
-/* Added position: relative so the mobile chat overlay stays contained here */
-.room-body { flex: 1; display: flex; overflow: hidden; position: relative; }
+.room-body { flex: 1; display: flex; overflow: hidden; }
 
 .video-area {
   flex: 1;
@@ -51,7 +50,6 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   flex-direction: column;
   border-left: 1px solid #334155;
   flex-shrink: 0;
-  transition: transform 0.3s ease; /* Adds a smooth slide-in effect */
 }
 .chat-panel.hidden { display: none; }
 .chat-header { padding: 12px 16px; border-bottom: 1px solid #334155; font-weight: 600; font-size: 14px; }
@@ -100,7 +98,6 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   justify-content: center;
   background: #374151;
   color: #fff;
-  transition: background 0.2s ease;
 }
 .ctrl-btn.off { background: #ef4444; }
 .ctrl-btn.leave { background: #ef4444; width: auto; padding: 0 20px; border-radius: 24px; font-size: 14px; font-weight: 600; }
@@ -111,46 +108,4 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   width: 24px;
   height: 24px;
   object-fit: contain;
-}
-
-/* --- MOBILE RESPONSIVENESS --- */
-@media (max-width: 768px) {
-  
-  /* Shrinks the header padding to save vertical space */
-  .room-header {
-    padding: 8px 12px;
-  }
-
-  /* Reduces minimum tile size so 2 video feeds can fit side-by-side on phones */
-  .video-area {
-    padding: 8px;
-    gap: 8px;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  }
-
-  /* Transforms the chat panel into a full-screen overlay */
-  .chat-panel {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 100;
-    border-left: none;
-  }
-
-  /* Scales down the control buttons slightly to prevent horizontal overflow */
-  .controls-bar {
-    padding: 10px;
-    gap: 10px;
-  }
-  .ctrl-btn {
-    width: 42px;
-    height: 42px;
-  }
-  .ctrl-btn.leave {
-    padding: 0 16px;
-    font-size: 13px;
-  }
 }
