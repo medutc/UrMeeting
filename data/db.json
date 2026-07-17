@@ -31,23 +31,46 @@
       "departmentId": null
     },
     {
-      "id": "69da17fd-011e-45da-899f-25ce636dc148",
-      "name": "Med Moataz",
+      "id": "c14883ff-5b51-4c0f-858e-4b7abe938a71",
+      "name": "med moataz",
       "email": "medmoataz01@gmail.com",
-      "password": "$2a$10$HeQTdLLmh9xC/4qioGeFIO14dt7dsO9h2JYjIPeEfUeweOY2iS2Cu",
+      "password": "$2a$10$Umnfzdn4PjfJHITcZzQRRu2LBR/wuSXFlV7/LsN/ehFgKtC3Hf3wy",
       "role": "dept_admin",
       "departmentId": "operations"
     },
     {
-      "id": "f202b94b-090d-44fb-ab90-03ac392361b4",
-      "name": "Tarzi Ilyas",
+      "id": "1ef675a7-5142-42a6-8547-36c83b12c4b0",
+      "name": "ilyas tarzi",
       "email": "tarzi@gmail.com",
-      "password": "$2a$10$qltVeHiamldD0UVxt5pN4uIAzIXQAEMexxXCPPRI/aMjOBhwmpAqO",
+      "password": "$2a$10$pTq/8zI2KYJj2SapWnUFmuMM3Q/GjIi.J9mccUSEUEcaeud0m2l2C",
       "role": "employee",
       "departmentId": "operations"
     }
   ],
-  "meetings": [],
+  "meetings": [
+    {
+      "id": "210c69d0-583b-496f-8a3e-2424e90b5ff5",
+      "title": "1",
+      "description": "h",
+      "date": "2026-07-17",
+      "time": "11:24",
+      "departmentId": "operations",
+      "createdBy": "69da17fd-011e-45da-899f-25ce636dc148",
+      "participantIds": [],
+      "createdAt": "2026-07-17T10:23:36.501Z"
+    },
+    {
+      "id": "fe540960-4000-49ea-a4de-78f45be407a8",
+      "title": "meet",
+      "description": "1",
+      "date": "2026-07-17",
+      "time": "11:33",
+      "departmentId": "operations",
+      "createdBy": "c14883ff-5b51-4c0f-858e-4b7abe938a71",
+      "participantIds": [],
+      "createdAt": "2026-07-17T10:32:46.877Z"
+    }
+  ],
   "messages": [
     {
       "id": "32fe8bc0-e0d5-45b1-b361-d37172f9667c",

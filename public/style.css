@@ -5,6 +5,7 @@ body {
   background: #f2f4f8;
   color: #1f2937;
 }
+
 .topbar {
   background: #364050;
   color: #fff;
@@ -21,6 +22,19 @@ body {
   font-size: 12px;
   margin-left: 10px;
 }
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 12px; 
+  margin: 0;
+  flex-wrap: wrap; /* Allows text to drop below logo on tiny screens */
+}
+.topbar-logo {
+  height: 52px; 
+  width: auto;
+  object-fit: contain;
+}
+
 .btn {
   cursor: pointer;
   border: none;
@@ -28,6 +42,7 @@ body {
   padding: 9px 16px;
   font-size: 14px;
   font-weight: 600;
+  transition: background 0.2s ease;
 }
 .btn-primary { background: #3b82f6; color: #fff; }
 .btn-primary:hover { background: #2563eb; }
@@ -48,7 +63,6 @@ body {
 .card h2 { margin-top: 0; font-size: 17px; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-@media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
 
 label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
 input, select, textarea {
@@ -60,7 +74,13 @@ input, select, textarea {
 }
 textarea { resize: vertical; min-height: 60px; }
 
-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+/* Responsive Table Wrapper */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+table { width: 100%; border-collapse: collapse; margin-top: 10px; min-width: 500px; /* Ensures table doesn't crush too much before scrolling */ }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
 th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b7280; }
 
@@ -73,36 +93,56 @@ th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px; /* Added padding so it doesn't touch the screen edges */
 }
 .login-box {
   background: #fff;
-  padding: 50px;
+  padding: 40px 30px; /* Reduced padding slightly for mobile */
   border-radius: 12px;
-  width: 500px;
+  width: 100%; /* Changed from fixed 500px */
+  max-width: 500px; /* Kept 500px as the maximum size */
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
 }
 .login-box h1 { text-align: center; font-size: 20px; margin-bottom: 20px; }
+.platform-logo {
+  max-width: 200px; 
+  height: auto;
+  display: block;
+  margin: 0 auto 24px auto; 
+}
+
 .error-msg { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 16px; }
 .success-msg { color: #16a34a; font-size: 13px; margin-top: 8px; }
 
 .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #e0e7ff; color: #3730a3; }
 .actions-row { display: flex; gap: 8px; }
 .empty-state { color: #9ca3af; font-size: 14px; padding: 12px 0; }
-.platform-logo {
-  max-width: 200px; /* Adjust this value up or down based on your logo's actual dimensions */
-  height: auto;
-  display: block;
-  margin: 0 auto 24px auto; /* Centers the logo horizontally and adds space below it */
-}
-.topbar-title {
-  display: flex;
-  align-items: center;
-  gap: 12px; /* Adds a nice, consistent space between the logo and the text */
-  margin: 0;
+
+/* --- RESPONSIVE MEDIA QUERIES --- */
+
+/* Tablets */
+@media (max-width: 800px) { 
+  .grid-2 { grid-template-columns: 1fr; } 
 }
 
-.topbar-logo {
-  height: 52px; /* Restricts the logo height so it fits nicely in the header */
-  width: auto;
-  object-fit: contain;
+/* Mobile Phones */
+@media (max-width: 600px) {
+  .container { padding: 16px; }
+  
+  .topbar {
+    flex-direction: column; /* Stacks the logo/title above user info */
+    align-items: flex-start;
+    gap: 15px;
+    padding: 16px;
+  }
+
+  .actions-row {
+    flex-direction: column; /* Stacks buttons vertically on phones */
+    width: 100%;
+  }
+
+  .actions-row .btn {
+    width: 100%; /* Makes buttons full width for easier tapping */
+    padding: 12px 16px; /* Increases touch target size */
+  }
 }
