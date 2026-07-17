@@ -47,5 +47,57 @@
       "departmentId": "operations"
     }
   ],
-  "meetings": []
+  "meetings": [],
+  "messages": [
+    {
+      "id": "32fe8bc0-e0d5-45b1-b361-d37172f9667c",
+      "fromId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "toId": "69da17fd-011e-45da-899f-25ce636dc148",
+      "text": "wach hani",
+      "attachment": null,
+      "createdAt": "2026-07-17T09:49:19.897Z",
+      "read": true
+    },
+    {
+      "id": "d05cb71f-8590-4c78-9d2b-0f9846d11827",
+      "fromId": "69da17fd-011e-45da-899f-25ce636dc148",
+      "toId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "text": "wi Allah y7afdak",
+      "attachment": null,
+      "createdAt": "2026-07-17T09:50:38.430Z",
+      "read": true
+    },
+    {
+      "id": "b9287f61-2baf-43a3-a85b-e18a4d7463cb",
+      "fromId": "69da17fd-011e-45da-899f-25ce636dc148",
+      "toId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "text": "chouf m3ak had logo wach nadi",
+      "attachment": {
+        "filename": "UrMeetingLogo.png",
+        "url": "/uploads/1784281887202-5d1b5099-UrMeetingLogo.png",
+        "mimetype": "image/png",
+        "size": 81632
+      },
+      "createdAt": "2026-07-17T09:51:27.208Z",
+      "read": true
+    },
+    {
+      "id": "c0939085-ebd6-41d3-b4bb-9a7fa3f73dd9",
+      "fromId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "toId": "69da17fd-011e-45da-899f-25ce636dc148",
+      "text": "ah nadi",
+      "attachment": null,
+      "createdAt": "2026-07-17T09:52:24.732Z",
+      "read": false
+    },
+    {
+      "id": "659c9ff2-bc1f-4c51-af77-cb5297dc609b",
+      "fromId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "toId": "407cbdd7-9454-4b2a-9035-f7a20bab91ea",
+      "text": "l3az",
+      "attachment": null,
+      "createdAt": "2026-07-17T09:52:30.488Z",
+      "read": false
+    }
+  ]
 }

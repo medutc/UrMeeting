@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Messages</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="messages.css">
+</head>
+<body>
+  <div class="msg-wrap">
+    <div class="topbar">
+      <h1>💬 Company Messages</h1>
+      <div>
+        <button class="btn btn-secondary" onclick="goBack()">Back to Dashboard</button>
+        <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+      </div>
+    </div>
+
+    <div class="msg-body">
+      <div class="directory-panel">
+        <div class="directory-search">
+          <input type="text" id="searchInput" placeholder="Search people...">
+        </div>
+        <div class="directory-list" id="directoryList"><p class="empty-state">Loading...</p></div>
+      </div>
+
+      <div class="chat-panel">
+        <div id="chatEmptyState" class="empty-state" style="margin:auto;">
+          Select someone from the list to start chatting.
+        </div>
+
+        <div id="chatActive" style="display:none; flex:1; flex-direction:column; min-height:0;">
+          <div class="chat-header">
+            <div class="avatar" id="chatAvatar"></div>
+            <div>
+              <div class="name" id="chatName"></div>
+              <div class="role" id="chatRole"></div>
+            </div>
+          </div>
+          <div class="chat-thread" id="chatThread"></div>
+          <div class="chat-input-area">
+            <div class="attach-preview" id="attachPreview">
+              <span id="attachName"></span>
+              <button onclick="clearAttachment()">✕</button>
+            </div>
+            <div class="chat-input-row">
+              <button class="icon-btn" id="attachBtn" title="Attach image, video, or file">📎</button>
+              <input type="file" id="fileInput" style="display:none;">
+              <input type="text" id="textInput" placeholder="Type a message...">
+              <button class="icon-btn send" id="sendBtn" title="Send">➤</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="common.js"></script>
+<script>
+let currentUser = null;
+let directory = [];
+let conversations = {};
+let activeUserId = null;
+let socket = null;
+let pendingFile = null;
+
+async function init() {
+  currentUser = await requireAuth();
+  if (!currentUser) return;
+
+  socket = io();
+  socket.on('connect', () => socket.emit('register', { userId: currentUser.id }));
+  socket.on('direct-message', (msg) => {
+    if (msg.fromId === activeUserId) {
+      renderMessage(msg);
+      scrollThreadToBottom();
+      apiGet('/api/messages/' + activeUserId); // marks as read server-side
+    }
+    loadConversationsAndDirectory(); // refresh previews/unread badges
+  });
+
+  await loadConversationsAndDirectory();
+
+  document.getElementById('searchInput').addEventListener('input', renderDirectory);
+  document.getElementById('sendBtn').addEventListener('click', sendMessage);
+  document.getElementById('textInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+  document.getElementById('attachBtn').addEventListener('click', () => document.getElementById('fileInput').click());
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    pendingFile = e.target.files[0] || null;
+    const preview = document.getElementById('attachPreview');
+    if (pendingFile) {
+      document.getElementById('attachName').textContent = '📎 ' + pendingFile.name;
+      preview.classList.add('show');
+    } else {
+      preview.classList.remove('show');
+    }
+  });
+}
+
+function goBack() { redirectByRole(currentUser.role); }
+
+async function loadConversationsAndDirectory() {
+  const [{ users }, { conversations: convs }] = await Promise.all([
+    apiGet('/api/directory'),
+    apiGet('/api/messages/conversations')
+  ]);
+  directory = users;
+  conversations = {};
+  convs.forEach(c => conversations[c.userId] = c);
+  renderDirectory();
+}
+
+function initials(name) {
+  return name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
+}
+
+function renderDirectory() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const el = document.getElementById('directoryList');
+
+  const sorted = [...directory].sort((a, b) => {
+    const ta = conversations[a.id] ? new Date(conversations[a.id].lastMessageAt).getTime() : 0;
+    const tb = conversations[b.id] ? new Date(conversations[b.id].lastMessageAt).getTime() : 0;
+    if (ta !== tb) return tb - ta;
+    return a.name.localeCompare(b.name);
+  });
+
+  const filtered = sorted.filter(u =>
+    u.name.toLowerCase().includes(search) || u.departmentName.toLowerCase().includes(search)
+  );
+
+  if (filtered.length === 0) {
+    el.innerHTML = '<p class="empty-state">No matching people.</p>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(u => {
+    const conv = conversations[u.id];
+    const active = u.id === activeUserId ? 'active' : '';
+    return `<div class="directory-item ${active}" onclick="openChat('${u.id}')">
+      <div class="avatar">${initials(u.name)}</div>
+      <div class="dir-info">
+        <div class="dir-name">${escapeHtml(u.name)}</div>
+        <div class="dir-preview">${conv ? escapeHtml(conv.lastMessage) : escapeHtml(u.departmentName)}</div>
+      </div>
+      ${conv && conv.unreadCount > 0 ? `<div class="unread-badge">${conv.unreadCount}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function openChat(userId) {
+  activeUserId = userId;
+  clearAttachment();
+  renderDirectory();
+
+  const user = directory.find(u => u.id === userId);
+  document.getElementById('chatEmptyState').style.display = 'none';
+  document.getElementById('chatActive').style.display = 'flex';
+  document.getElementById('chatAvatar').textContent = initials(user.name);
+  document.getElementById('chatName').textContent = user.name;
+  document.getElementById('chatRole').textContent = `${user.departmentName} • ${user.role === 'superadmin' ? 'Super Admin' : user.role === 'dept_admin' ? 'Department Admin' : 'Employee'}`;
+
+  const { messages } = await apiGet('/api/messages/' + userId);
+  const thread = document.getElementById('chatThread');
+  thread.innerHTML = '';
+  messages.forEach(renderMessage);
+  scrollThreadToBottom();
+
+  if (conversations[userId]) conversations[userId].unreadCount = 0;
+  renderDirectory();
+}
+
+function renderMessage(m) {
+  const thread = document.getElementById('chatThread');
+  const isMe = m.fromId === currentUser.id;
+  const row = document.createElement('div');
+  row.className = 'bubble-row' + (isMe ? ' me' : '');
+
+  const time = new Date(m.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  let inner = '';
+  if (m.text) inner += `<div>${escapeHtml(m.text)}</div>`;
+  if (m.attachment) inner += renderAttachment(m.attachment);
+  inner += `<span class="time">${time}</span>`;
+
+  row.innerHTML = `<div class="bubble">${inner}</div>`;
+  thread.appendChild(row);
+}
+
+function renderAttachment(att) {
+  if (att.mimetype.startsWith('image/')) {
+    return `<a href="${att.url}" target="_blank"><img src="${att.url}" alt="${escapeHtml(att.filename)}"></a>`;
+  }
+  if (att.mimetype.startsWith('video/')) {
+    return `<video src="${att.url}" controls></video>`;
+  }
+  const sizeKb = (att.size / 1024).toFixed(0);
+  return `<a class="file-attach" href="${att.url}" target="_blank" download="${escapeHtml(att.filename)}">
+    <span class="file-icon">📄</span>
+    <div>
+      <div class="file-name">${escapeHtml(att.filename)}</div>
+      <div class="file-size">${sizeKb} KB — click to download</div>
+    </div>
+  </a>`;
+}
+
+function scrollThreadToBottom() {
+  const thread = document.getElementById('chatThread');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function clearAttachment() {
+  pendingFile = null;
+  document.getElementById('fileInput').value = '';
+  document.getElementById('attachPreview').classList.remove('show');
+}
+
+async function sendMessage() {
+  if (!activeUserId) return;
+  const textInput = document.getElementById('textInput');
+  const text = textInput.value.trim();
+  if (!text && !pendingFile) return;
+
+  const formData = new FormData();
+  formData.append('toId', activeUserId);
+  if (text) formData.append('text', text);
+  if (pendingFile) formData.append('file', pendingFile);
+
+  try {
+    const res = await fetch('/api/messages', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to send');
+    renderMessage(data.message);
+    scrollThreadToBottom();
+    textInput.value = '';
+    clearAttachment();
+    loadConversationsAndDirectory();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

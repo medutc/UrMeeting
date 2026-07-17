@@ -16,7 +16,8 @@ db.defaults({
     { id: 'hr', name: 'Human Resources' }
   ],
   users: [],   // { id, name, email, password(hash), role: 'superadmin'|'dept_admin'|'employee', departmentId }
-  meetings: [] // { id, title, description, date, time, departmentId, createdBy, participantIds: [] }
+  meetings: [], // { id, title, description, date, time, departmentId, createdBy, participantIds: [] }
+  messages: []  // { id, fromId, toId, text, attachment: {filename, url, mimetype, size} | null, createdAt, read }
 }).write();
 
 module.exports = db;

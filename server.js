@@ -6,12 +6,27 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('./db');
 
 const app = express();
 const httpServer = http.createServer(app);
 const io = new Server(httpServer);
 const PORT = process.env.PORT || 3000;
+
+// ---------- File upload setup (for direct messages: images, videos, any file) ----------
+const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}-${safeName}`);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -260,10 +275,129 @@ function enrichMeetings(meetings) {
   }));
 }
 
+// ---------- Company Directory + Direct Messages (any user <-> any user) ----------
+
+// Everyone (any role) can see everyone else, across all departments, to start a chat
+app.get('/api/directory', requireLogin, (req, res) => {
+  const depts = db.get('departments').value();
+  const users = db.get('users')
+    .filter(u => u.id !== req.session.userId)
+    .value()
+    .map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      departmentId: u.departmentId,
+      departmentName: (depts.find(d => d.id === u.departmentId) || {}).name || (u.role === 'superadmin' ? 'Management' : '-')
+    }));
+  res.json({ users });
+});
+
+// List of conversations (one row per other user you've exchanged messages with, or all users
+// with a flag) so the UI can show previews + unread counts.
+app.get('/api/messages/conversations', requireLogin, (req, res) => {
+  const meId = req.session.userId;
+  const allMessages = db.get('messages').value();
+  const users = db.get('users').value();
+  const byUser = {};
+
+  allMessages.forEach(m => {
+    if (m.fromId !== meId && m.toId !== meId) return;
+    const otherId = m.fromId === meId ? m.toId : m.fromId;
+    if (!byUser[otherId] || new Date(m.createdAt) > new Date(byUser[otherId].createdAt)) {
+      byUser[otherId] = m;
+    }
+  });
+
+  const conversations = Object.keys(byUser).map(otherId => {
+    const u = users.find(x => x.id === otherId);
+    const last = byUser[otherId];
+    const unreadCount = allMessages.filter(m => m.fromId === otherId && m.toId === meId && !m.read).length;
+    return {
+      userId: otherId,
+      name: u ? u.name : 'Unknown user',
+      lastMessage: last.text || (last.attachment ? `📎 ${last.attachment.filename}` : ''),
+      lastMessageAt: last.createdAt,
+      unreadCount
+    };
+  }).sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
+
+  res.json({ conversations });
+});
+
+// Full conversation thread with a specific user (marks their messages to me as read)
+app.get('/api/messages/:userId', requireLogin, (req, res) => {
+  const meId = req.session.userId;
+  const otherId = req.params.userId;
+  const other = db.get('users').find({ id: otherId }).value();
+  if (!other) return res.status(404).json({ error: 'User not found' });
+
+  const thread = db.get('messages')
+    .filter(m => (m.fromId === meId && m.toId === otherId) || (m.fromId === otherId && m.toId === meId))
+    .value()
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+  // Mark incoming messages as read
+  db.get('messages')
+    .filter(m => m.fromId === otherId && m.toId === meId && !m.read)
+    .each(m => { m.read = true; })
+    .write();
+
+  res.json({ messages: thread, otherUser: { id: other.id, name: other.name, email: other.email } });
+});
+
+// Send a direct message: JSON text-only, OR multipart/form-data with an optional file
+// (image, video, or any document) attached.
+app.post('/api/messages', requireLogin, upload.single('file'), (req, res) => {
+  const meId = req.session.userId;
+  const { toId, text } = req.body;
+
+  if (!toId) return res.status(400).json({ error: 'toId is required' });
+  const recipient = db.get('users').find({ id: toId }).value();
+  if (!recipient) return res.status(404).json({ error: 'Recipient not found' });
+  if (!text && !req.file) return res.status(400).json({ error: 'Message must have text or an attachment' });
+
+  let attachment = null;
+  if (req.file) {
+    attachment = {
+      filename: req.file.originalname,
+      url: '/uploads/' + req.file.filename,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    };
+  }
+
+  const message = {
+    id: uuidv4(),
+    fromId: meId,
+    toId,
+    text: text || '',
+    attachment,
+    createdAt: new Date().toISOString(),
+    read: false
+  };
+  db.get('messages').push(message).write();
+
+  // Real-time delivery if the recipient is online
+  io.to('user:' + toId).emit('direct-message', message);
+
+  res.status(201).json({ message });
+});
+
 // ---------- Socket.io: WebRTC signaling + live chat ----------
 // Rooms are keyed by meetingId. Every socket that joins must belong to that
 // meeting (creator, invited employee, or superadmin) — verified server-side.
 io.on('connection', (socket) => {
+  // Any logged-in user registers their personal room so direct messages reach them live,
+  // regardless of whether they're in a meeting room or just browsing the dashboard.
+  socket.on('register', ({ userId }) => {
+    const user = db.get('users').find({ id: userId }).value();
+    if (!user) return;
+    socket.data.registeredUserId = userId;
+    socket.join('user:' + userId);
+  });
+
   socket.on('join-room', ({ meetingId, userId }) => {
     const meeting = db.get('meetings').find({ id: meetingId }).value();
     const user = db.get('users').find({ id: userId }).value();
