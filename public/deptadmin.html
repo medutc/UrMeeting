@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,13 +7,14 @@
 <link rel="stylesheet" href="style.css">
 <link rel="icon" type="image/png" href="images/UrMeetingLogo.png">
 </head>
+<script>document.documentElement.setAttribute("data-theme", localStorage.getItem("urmeeting-theme")==="dark"?"dark":"light");</script>
 <body>
   <div class="topbar">
     <h1 class="topbar-title">
     <img src="images/UrMeetingLogo.png" alt="UrMeeting Logo" class="topbar-logo">
     <span id="pageTitle">Department Admin <span class="role-badge">DEPT ADMIN</span></span>
   </h1>
-    <div>
+    <div class="topbar-actions">
       <a class="btn btn-secondary" style="text-decoration:none; margin-right:8px;" href="/messages.html">💬 Messages</a>
       <button class="btn btn-secondary" onclick="logout()">Log Out</button>
     </div>
@@ -60,6 +62,7 @@
 let employees = [];
 
 async function init() {
+  initThemeToggle('.topbar-actions');
   const user = await requireAuth('dept_admin');
   if (!user) return;
   document.getElementById('pageTitle').innerHTML = `${escapeHtml(user.name)}'s Dashboard <span class="role-badge">DEPT ADMIN</span>`;

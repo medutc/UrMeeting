@@ -6,13 +6,16 @@
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="messages.css">
 </head>
+<script>document.documentElement.setAttribute("data-theme", localStorage.getItem("urmeeting-theme")==="dark"?"dark":"light");</script>
 <body>
+   
   <div class="msg-wrap">
     <div class="topbar">
       <h1>💬 Company Messages</h1>
       <div>
         <button class="btn btn-secondary" onclick="goBack()">Back to Dashboard</button>
         <button class="btn btn-secondary" onclick="logout()">Log Out</button>
+     
       </div>
     </div>
 
@@ -58,6 +61,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
+  
 let currentUser = null;
 let directory = [];
 let conversations = {};

@@ -1,3 +1,4 @@
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -416,7 +417,13 @@ io.on('connection', (socket) => {
     const room = io.sockets.adapter.rooms.get(meetingId) || new Set();
     const existingUsers = Array.from(room).map(sid => {
       const s = io.sockets.sockets.get(sid);
-      return { socketId: sid, userId: s.data.userId, name: s.data.name };
+      return {
+        socketId: sid,
+        userId: s.data.userId,
+        name: s.data.name,
+        sharingScreen: !!s.data.sharingScreen,
+        handRaised: !!s.data.handRaised
+      };
     });
     socket.emit('existing-users', existingUsers);
 
@@ -436,6 +443,43 @@ io.on('connection', (socket) => {
       name: socket.data.name || 'Unknown',
       text: String(text).slice(0, 2000),
       time: new Date().toISOString()
+    });
+  });
+
+  // ---- Screen sharing presence (actual media swap happens peer-to-peer via renegotiation;
+  // this just tells everyone in the room who is currently presenting so the UI can react) ----
+  socket.on('screen-share-started', ({ meetingId }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    socket.data.sharingScreen = true;
+    io.to(meetingId).emit('screen-share-changed', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, sharing: true
+    });
+  });
+
+  socket.on('screen-share-stopped', ({ meetingId }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    socket.data.sharingScreen = false;
+    io.to(meetingId).emit('screen-share-changed', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, sharing: false
+    });
+  });
+
+  // ---- Raise / lower hand ----
+  socket.on('raise-hand', ({ meetingId, raised }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    socket.data.handRaised = !!raised;
+    io.to(meetingId).emit('hand-raised', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, raised: !!raised
+    });
+  });
+
+  // ---- Emoji reactions (ephemeral, not stored) ----
+  socket.on('reaction', ({ meetingId, emoji }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId || !emoji) return;
+    const allowed = ['👍', '❤️', '😂', '😮', '👏', '🎉', '🙌', '✅'];
+    if (!allowed.includes(emoji)) return;
+    io.to(meetingId).emit('reaction', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, emoji
     });
   });
 

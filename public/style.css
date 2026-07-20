@@ -1,19 +1,67 @@
+
+:root {
+  --bg: #f2f4f8;
+  --text: #1f2937;
+  --topbar-bg: #364050;
+  --topbar-text: #fff;
+  --card-bg: #fff;
+  --card-shadow: rgba(0,0,0,0.08);
+  --border: #d1d5db;
+  --border-soft: #e5e7eb;
+  --input-bg: #fff;
+  --input-text: #1f2937;
+  --th-bg: #f8fafc;
+  --th-text: #6b7280;
+  --btn-secondary-bg: #e5e7eb;
+  --btn-secondary-text: #111827;
+  --btn-secondary-hover: #d1d5db;
+  --tag-bg: #e0e7ff;
+  --tag-text: #3730a3;
+  --empty-color: #9ca3af;
+  --login-shadow: rgba(0,0,0,0.1);
+}
+
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --text: #e5e7eb;
+  --topbar-bg: #1e293b;
+  --topbar-text: #f3f4f6;
+  --card-bg: #1e293b;
+  --card-shadow: rgba(0,0,0,0.4);
+  --border: #334155;
+  --border-soft: #334155;
+  --input-bg: #0f172a;
+  --input-text: #e5e7eb;
+  --th-bg: #111827;
+  --th-text: #9ca3af;
+  --btn-secondary-bg: #334155;
+  --btn-secondary-text: #f3f4f6;
+  --btn-secondary-hover: #475569;
+  --tag-bg: #312e81;
+  --tag-text: #c7d2fe;
+  --empty-color: #6b7280;
+  --login-shadow: rgba(0,0,0,0.5);
+}
+
 * { box-sizing: border-box; }
 body {
   margin: 0;
   font-family: 'Segoe UI', Arial, sans-serif;
-  background: #f2f4f8;
-  color: #1f2937;
+  background: var(--bg);
+  color: var(--text);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .topbar {
-  background: #364050;
-  color: #fff;
+  background: var(--topbar-bg);
+  color: var(--topbar-text);
   padding: 14px 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
+.theme-toggle-btn { display: inline-flex; align-items: center; justify-content: center; padding: 8px 10px; }
+.theme-toggle-icon { width: 18px; height: 18px; object-fit: contain; }
 .topbar h1 { font-size: 18px; margin: 0; }
 .topbar .role-badge {
   background: #3b82f6;
@@ -48,17 +96,18 @@ body {
 .btn-primary:hover { background: #2563eb; }
 .btn-danger { background: #ef4444; color: #fff; }
 .btn-danger:hover { background: #dc2626; }
-.btn-secondary { background: #e5e7eb; color: #111827; }
-.btn-secondary:hover { background: #d1d5db; }
+.btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); }
+.btn-secondary:hover { background: var(--btn-secondary-hover); }
 
 .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
 
 .card {
-  background: #fff;
+  background: var(--card-bg);
   border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  box-shadow: 0 1px 4px var(--card-shadow);
   margin-bottom: 20px;
+  transition: background 0.2s ease;
 }
 .card h2 { margin-top: 0; font-size: 17px; }
 
@@ -68,9 +117,11 @@ label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
 input, select, textarea {
   width: 100%;
   padding: 9px 10px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--input-bg);
+  color: var(--input-text);
 }
 textarea { resize: vertical; min-height: 60px; }
 
@@ -81,10 +132,10 @@ textarea { resize: vertical; min-height: 60px; }
   -webkit-overflow-scrolling: touch;
 }
 table { width: 100%; border-collapse: collapse; margin-top: 10px; min-width: 500px; /* Ensures table doesn't crush too much before scrolling */ }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
-th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b7280; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); font-size: 14px; }
+th { background: var(--th-bg); font-size: 12px; text-transform: uppercase; color: var(--th-text); }
 
-.checkbox-list { max-height: 180px; overflow-y: auto; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
+.checkbox-list { max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .checkbox-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 4px 0; }
 .checkbox-list input { width: auto; }
 
@@ -96,12 +147,12 @@ th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b
   padding: 20px; /* Added padding so it doesn't touch the screen edges */
 }
 .login-box {
-  background: #fff;
+  background: var(--card-bg);
   padding: 40px 30px; /* Reduced padding slightly for mobile */
   border-radius: 12px;
   width: 100%; /* Changed from fixed 500px */
   max-width: 500px; /* Kept 500px as the maximum size */
-  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 20px var(--login-shadow);
 }
 .login-box h1 { text-align: center; font-size: 20px; margin-bottom: 20px; }
 .platform-logo {
@@ -114,9 +165,9 @@ th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #6b
 .error-msg { color: #dc2626; font-size: 13px; margin-top: 8px; min-height: 16px; }
 .success-msg { color: #16a34a; font-size: 13px; margin-top: 8px; }
 
-.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #e0e7ff; color: #3730a3; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: var(--tag-bg); color: var(--tag-text); }
 .actions-row { display: flex; gap: 8px; }
-.empty-state { color: #9ca3af; font-size: 14px; padding: 12px 0; }
+.empty-state { color: var(--empty-color); font-size: 14px; padding: 12px 0; }
 
 /* --- RESPONSIVE MEDIA QUERIES --- */
 

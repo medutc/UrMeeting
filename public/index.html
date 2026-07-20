@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,7 +7,11 @@
 <link rel="stylesheet" href="style.css">
 <link rel="icon" type="image/png" href="images/UrMeetingLogo.png">
 </head>
+<script>document.documentElement.setAttribute("data-theme", localStorage.getItem("urmeeting-theme")==="dark"?"dark":"light");</script>
 <body>
+  <button class="btn btn-secondary theme-toggle-btn" id="themeToggleBtn" type="button" title="Switch between light and dark mode" style="position:fixed; top:16px; right:16px; z-index:10;">
+    <img src="images/theme-dark.png" alt="Toggle theme" class="theme-toggle-icon" id="themeToggleIcon">
+  </button>
   <div class="login-wrap">
     <div class="login-box">
 <img src="images/UrMeetingLogo.png" alt="UrMeeting Logo" class="platform-logo">
@@ -24,6 +29,20 @@
   </div>
 
 <script>
+(function() {
+  function currentTheme() { return localStorage.getItem('urmeeting-theme') === 'dark' ? 'dark' : 'light'; }
+  function refreshIcon() {
+    document.getElementById('themeToggleIcon').src = currentTheme() === 'dark' ? 'images/theme-light.png' : 'images/theme-dark.png';
+  }
+  refreshIcon();
+  document.getElementById('themeToggleBtn').addEventListener('click', () => {
+    const next = currentTheme() === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('urmeeting-theme', next);
+    document.documentElement.setAttribute('data-theme', next);
+    refreshIcon();
+  });
+})();
+
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const email = document.getElementById('email').value;
