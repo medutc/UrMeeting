@@ -124,6 +124,14 @@ let bgCanvas, bgCtx, bgSourceVideo;
 let bgAnimHandle = null;
 
 const peers = {}; // socketId -> { pc, name, sharingScreen, handRaised }
+// Remote state that must survive even before the peer's video tile exists yet
+// (WebRTC negotiation/ontrack can take a moment, but reactions/hand-raise/screen-share
+// events can arrive from the server before that tile is in the DOM).
+const remoteState = {}; // socketId -> { name, handRaised, sharingScreen }
+function getRemoteState(socketId) {
+  if (!remoteState[socketId]) remoteState[socketId] = { name: null, handRaised: false, sharingScreen: false, micMuted: false };
+  return remoteState[socketId];
+}
 const STUN_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 // ============================================================
@@ -227,11 +235,31 @@ function togglePopover(id) {
 // ============================================================
 // LOCAL TILE
 // ============================================================
+// IMPORTANT: this must be the SAME MediaStream instance every time it's read while
+// sending to peers. Calling `new MediaStream(tracks)` fresh on every pc.addTrack()
+// call (as this used to do) gives the video track and the audio track two different
+// stream ids (msid). The browser then advertises them as two unrelated remote
+// streams, so the receiver's pc.ontrack fires twice with two different
+// `e.streams[0]` values and the *last* one to arrive overwrites the <video>
+// element's srcObject — if the audio track's event lands last, the video element
+// ends up showing an audio-only stream, i.e. a black screen. Keeping one shared
+// MediaStream object (and mutating its tracks in place) keeps both tracks bundled
+// under a single msid so the receiver gets both in the same 'streams[0]'.
+const localOutboundStream = new MediaStream();
+function syncLocalOutboundStream() {
+  localOutboundStream.getTracks().forEach(t => {
+    if (t !== outboundVideoTrack && t !== audioTrack) localOutboundStream.removeTrack(t);
+  });
+  if (outboundVideoTrack && !localOutboundStream.getTracks().includes(outboundVideoTrack)) {
+    localOutboundStream.addTrack(outboundVideoTrack);
+  }
+  if (audioTrack && !localOutboundStream.getTracks().includes(audioTrack)) {
+    localOutboundStream.addTrack(audioTrack);
+  }
+  return localOutboundStream;
+}
 function currentOutboundStream() {
-  const tracks = [];
-  if (outboundVideoTrack) tracks.push(outboundVideoTrack);
-  if (audioTrack) tracks.push(audioTrack);
-  return new MediaStream(tracks);
+  return syncLocalOutboundStream();
 }
 
 function renderLocalTile() {
@@ -278,6 +306,10 @@ function connectSocket() {
 
   socket.on('connect', () => {
     socket.emit('join-room', { meetingId, userId: currentUser.id });
+    // Let everyone already in the room know our starting mic state (e.g. if the
+    // mic was toggled off in the pre-join lobby before connecting).
+    socket.emit('mic-changed', { meetingId, muted: !micOn });
+    applyMutedIcon('tile-local', !micOn);
   });
 
   socket.on('join-error', (msg) => {
@@ -286,9 +318,14 @@ function connectSocket() {
 
   socket.on('existing-users', (users) => {
     users.forEach(u => {
+      const state = getRemoteState(u.socketId);
+      state.name = u.name;
+      state.sharingScreen = !!u.sharingScreen;
+      state.handRaised = !!u.handRaised;
+      state.micMuted = !!u.micMuted;
       const entry = createPeerConnection(u.socketId, u.name, true);
-      entry.sharingScreen = u.sharingScreen;
-      entry.handRaised = u.handRaised;
+      entry.sharingScreen = state.sharingScreen;
+      entry.handRaised = state.handRaised;
     });
     updateParticipantCount();
     refreshHandBadges();
@@ -323,6 +360,7 @@ function connectSocket() {
       peers[u.socketId].pc.close();
       delete peers[u.socketId];
     }
+    delete remoteState[u.socketId];
     updateParticipantCount();
     refreshHandBadges();
   });
@@ -332,7 +370,10 @@ function connectSocket() {
   });
 
   socket.on('screen-share-changed', ({ socketId, name, sharing }) => {
-    if (peers[socketId]) peers[socketId].sharingScreen = sharing;
+    const state = getRemoteState(socketId);
+    state.sharingScreen = !!sharing;
+    if (name) state.name = name;
+    if (peers[socketId]) peers[socketId].sharingScreen = !!sharing;
     const tile = document.getElementById('tile-' + socketId);
     if (tile) {
       tile.classList.toggle('presenting', sharing);
@@ -346,27 +387,62 @@ function connectSocket() {
         badge.remove();
       }
     }
+    // If the tile isn't in the DOM yet, updateSpotlight()/the badge will be
+    // (re)applied automatically once pc.ontrack creates it (see createPeerConnection).
     updateSpotlight();
     addSystemChatLine(`${name} ${sharing ? 'started' : 'stopped'} sharing their screen`);
   });
 
   socket.on('hand-raised', ({ socketId, name, raised }) => {
-    if (peers[socketId]) peers[socketId].handRaised = raised;
+    const state = getRemoteState(socketId);
+    state.handRaised = !!raised;
+    if (name) state.name = name;
+    if (peers[socketId]) peers[socketId].handRaised = !!raised;
+    // Always refresh, even if the peer's tile/connection hasn't been created yet —
+    // refreshHandBadges() falls back to remoteState so the badge appears as soon
+    // as the tile exists.
     refreshHandBadges();
     addSystemChatLine(`${name} ${raised ? 'raised' : 'lowered'} their hand ✋`);
   });
 
   socket.on('reaction', ({ socketId, emoji }) => {
-    showFloatingEmoji(socketId === socket.id ? 'local' : socketId, emoji);
+    // The sender already renders their own reaction optimistically in sendReaction(),
+    // so skip re-rendering it when our own broadcast echoes back to us.
+    if (socketId === socket.id) return;
+    showFloatingEmoji(socketId, emoji);
   });
+
+  socket.on('mic-changed', ({ socketId, muted }) => {
+    const state = getRemoteState(socketId);
+    state.micMuted = !!muted;
+    applyMutedIcon('tile-' + socketId, state.micMuted);
+  });
+}
+
+function applyMutedIcon(tileId, muted) {
+  const tile = document.getElementById(tileId);
+  if (!tile) return; // will be re-applied once the tile is created, see pc.ontrack
+  let icon = tile.querySelector('.muted-icon');
+  if (muted && !icon) {
+    icon = document.createElement('div');
+    icon.className = 'muted-icon';
+    icon.textContent = '🔇';
+    icon.title = 'Microphone muted';
+    tile.appendChild(icon);
+  } else if (!muted && icon) {
+    icon.remove();
+  }
 }
 
 function createPeerConnection(socketId, name, isInitiator) {
   const pc = new RTCPeerConnection(STUN_CONFIG);
-  peers[socketId] = { pc, name, sharingScreen: false, handRaised: false };
+  const state = getRemoteState(socketId);
+  if (name) state.name = name;
+  peers[socketId] = { pc, name, sharingScreen: state.sharingScreen, handRaised: state.handRaised };
 
-  if (outboundVideoTrack) pc.addTrack(outboundVideoTrack, currentOutboundStream());
-  if (audioTrack) pc.addTrack(audioTrack, currentOutboundStream());
+  const sendStream = currentOutboundStream();
+  if (outboundVideoTrack) pc.addTrack(outboundVideoTrack, sendStream);
+  if (audioTrack) pc.addTrack(audioTrack, sendStream);
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('signal', { to: socketId, data: e.candidate });
@@ -395,9 +471,47 @@ function createPeerConnection(socketId, name, isInitiator) {
       tile.appendChild(label);
       tile.appendChild(reactionLayer);
       videoArea.appendChild(tile);
+
+      // The tile just came into existence — re-apply any state (hand raised,
+      // screen sharing) that may have arrived from the server before this
+      // tile was ready to render it.
+      const state = getRemoteState(socketId);
+      if (peers[socketId]) {
+        peers[socketId].sharingScreen = state.sharingScreen;
+        peers[socketId].handRaised = state.handRaised;
+      }
+      if (state.sharingScreen) {
+        tile.classList.add('presenting');
+        if (!tile.querySelector('.presenting-badge')) {
+          const badge = document.createElement('div');
+          badge.className = 'presenting-badge';
+          badge.textContent = '🖥️ Presenting';
+          tile.appendChild(badge);
+        }
+      }
+      applyMutedIcon(tile.id, state.micMuted);
+      refreshHandBadges();
+      updateSpotlight();
     }
     const videoEl = tile.querySelector('video');
-    if (videoEl.srcObject !== e.streams[0]) videoEl.srcObject = e.streams[0];
+    // Defensive: accumulate incoming tracks into ONE persistent MediaStream for this
+    // peer instead of assigning e.streams[0] directly. If video/audio ever arrive as
+    // separate remote streams (e.g. due to a stale offer/answer from a mismatched
+    // client), blindly overwriting srcObject with whichever event fires last can
+    // replace a working video stream with an audio-only one — which looks like a
+    // black screen even though the connection is fine.
+    let combinedStream = peers[socketId].remoteStream;
+    if (!combinedStream) {
+      combinedStream = new MediaStream();
+      peers[socketId].remoteStream = combinedStream;
+      videoEl.srcObject = combinedStream;
+    }
+    if (!combinedStream.getTracks().includes(e.track)) {
+      combinedStream.addTrack(e.track);
+    }
+    e.track.addEventListener('ended', () => {
+      if (combinedStream.getTracks().includes(e.track)) combinedStream.removeTrack(e.track);
+    });
     tile.classList.remove('cam-off');
   };
 
@@ -413,10 +527,11 @@ function createPeerConnection(socketId, name, isInitiator) {
 }
 
 function replaceOutboundTrackOnAllPeers(newTrack) {
+  syncLocalOutboundStream();
   Object.values(peers).forEach(({ pc }) => {
     const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
     if (sender) sender.replaceTrack(newTrack);
-    else if (newTrack) pc.addTrack(newTrack, currentOutboundStream());
+    else if (newTrack) pc.addTrack(newTrack, localOutboundStream);
   });
 }
 
@@ -433,6 +548,8 @@ function toggleMic() {
   audioTrack.enabled = !audioTrack.enabled;
   micOn = audioTrack.enabled;
   document.getElementById('micBtn').classList.toggle('off', !micOn);
+  applyMutedIcon('tile-local', !micOn);
+  socket.emit('mic-changed', { meetingId, muted: !micOn });
 }
 
 function toggleCam() {
@@ -516,10 +633,15 @@ function refreshHandBadges() {
     addHandIcon('tile-local');
     raisedNames.push('You');
   }
-  Object.entries(peers).forEach(([id, p]) => {
-    if (p.handRaised) {
+  // Merge peers + remoteState so a hand-raise that arrived before the tile/pc
+  // existed is still shown once we know about the participant.
+  const ids = new Set([...Object.keys(peers), ...Object.keys(remoteState)]);
+  ids.forEach(id => {
+    const raised = (peers[id] && peers[id].handRaised) || (remoteState[id] && remoteState[id].handRaised);
+    if (raised) {
       addHandIcon('tile-' + id);
-      raisedNames.push(p.name);
+      const name = (peers[id] && peers[id].name) || (remoteState[id] && remoteState[id].name) || 'Participant';
+      raisedNames.push(name);
     }
   });
   document.getElementById('raisedHandsStrip').textContent = raisedNames.length
@@ -550,7 +672,7 @@ function sendReaction(emoji) {
 }
 function showFloatingEmoji(tileKey, emoji) {
   const layer = document.getElementById('reaction-' + tileKey);
-  if (!layer) return;
+  if (!layer) return; // tile not created yet (rare race right after joining) — reaction is ephemeral, safe to skip
   const span = document.createElement('span');
   span.className = 'floating-emoji';
   span.textContent = emoji;

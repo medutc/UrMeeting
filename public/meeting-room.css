@@ -89,7 +89,12 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   gap: 5px;
   z-index: 2;
 }
-.video-tile .muted-icon { position: absolute; top: 8px; right: 8px; font-size: 14px; z-index: 2; }
+.video-tile .muted-icon {
+  position: absolute; top: 8px; right: 8px; font-size: 14px; z-index: 4;
+  background: rgba(0,0,0,0.55); padding: 3px 5px; border-radius: 6px;
+}
+/* When also presenting, keep the presenting badge readable and push the muted icon left of it */
+.video-tile.presenting .muted-icon { right: 96px; }
 .video-tile .hand-icon {
   position: absolute; top: 8px; left: 8px; font-size: 18px; z-index: 2;
   animation: wave 1s infinite;

@@ -422,7 +422,8 @@ io.on('connection', (socket) => {
         userId: s.data.userId,
         name: s.data.name,
         sharingScreen: !!s.data.sharingScreen,
-        handRaised: !!s.data.handRaised
+        handRaised: !!s.data.handRaised,
+        micMuted: !!s.data.micMuted
       };
     });
     socket.emit('existing-users', existingUsers);
@@ -461,6 +462,15 @@ io.on('connection', (socket) => {
     socket.data.sharingScreen = false;
     io.to(meetingId).emit('screen-share-changed', {
       socketId: socket.id, userId: socket.data.userId, name: socket.data.name, sharing: false
+    });
+  });
+
+  // ---- Mic mute status (so everyone in the room sees who's muted) ----
+  socket.on('mic-changed', ({ meetingId, muted }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    socket.data.micMuted = !!muted;
+    io.to(meetingId).emit('mic-changed', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, muted: !!muted
     });
   });
 
