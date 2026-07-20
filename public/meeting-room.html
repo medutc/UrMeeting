@@ -7,13 +7,45 @@
 <link rel="icon" type="image/png" href="images/UrMeetingLogo.png">
 </head>
 <body>
-  <div class="room-wrap" id="roomWrap">
+
+  <!-- ================= PRE-JOIN LOBBY ================= -->
+  <div class="lobby-overlay" id="lobbyOverlay">
+    <div class="lobby-preview-wrap">
+      <div class="lobby-preview cam-off" id="lobbyPreview">
+        <video id="lobbyVideo" autoplay muted playsinline></video>
+        <canvas id="lobbyCanvas" style="display:none;"></canvas>
+        <div class="avatar-fallback"><div class="avatar-circle" id="lobbyAvatar">?</div></div>
+      </div>
+      <div class="lobby-controls">
+        <button class="ctrl-btn" id="lobbyMicBtn" title="Toggle microphone">
+          <img src="images/mic.png" class="btn-icon" alt="Mic">
+        </button>
+        <button class="ctrl-btn" id="lobbyCamBtn" title="Toggle camera">
+          <img src="images/camera.png" class="btn-icon" alt="Camera">
+        </button>
+        <button class="ctrl-btn" id="lobbyBgBtn" title="Choose background">🖼️</button>
+      </div>
+    </div>
+    <div class="lobby-panel">
+      <h2 id="lobbyTitle">Ready to join?</h2>
+      <div class="sub" id="lobbySub">Loading meeting details...</div>
+      <div id="bgPanelLobby"></div>
+      <button class="join-btn" id="joinBtn" disabled>Join Meeting</button>
+      <div class="lobby-status" id="lobbyStatus"></div>
+    </div>
+  </div>
+
+  <!-- ================= MEETING ROOM ================= -->
+  <div class="room-wrap" id="roomWrap" style="display:none;">
     <div class="room-header">
       <div>
         <h1 id="meetingTitle">Loading meeting...</h1>
         <div class="sub" id="meetingSub"></div>
       </div>
-      <div class="sub" id="participantCount"></div>
+      <div class="header-right">
+        <div class="raised-hands-strip" id="raisedHandsStrip"></div>
+        <div class="sub" id="participantCount"></div>
+      </div>
     </div>
 
     <div class="room-body">
@@ -30,68 +62,176 @@
       </div>
     </div>
 
-   <div class="controls-bar">
-  <button class="ctrl-btn" id="micBtn" title="Toggle microphone">
-    <img src="images/mic.png" alt="Mic" class="btn-icon">
-  </button>
-  <button class="ctrl-btn" id="camBtn" title="Toggle camera">
-    <img src="images/camera.png" alt="Camera" class="btn-icon">
-  </button>
-  <button class="ctrl-btn chat-toggle active" id="chatBtn" title="Toggle chat">
-    <img src="images/chat.png" alt="Chat" class="btn-icon">
-  </button>
-  <button class="ctrl-btn leave" id="leaveBtn">Leave Meeting</button>
-</div>
+    <div class="controls-bar" id="controlsBar">
+      <button class="ctrl-btn" id="micBtn" title="Toggle microphone">
+        <img src="images/mic.png" alt="Mic" class="btn-icon">
+      </button>
+      <button class="ctrl-btn" id="camBtn" title="Toggle camera">
+        <img src="images/camera.png" alt="Camera" class="btn-icon">
+      </button>
+      <button class="ctrl-btn" id="screenShareBtn" title="Share your screen">🖥️</button>
+      <button class="ctrl-btn" id="handBtn" title="Raise/lower hand">✋</button>
+
+      <button class="ctrl-btn" id="reactionBtn" title="Send a reaction">😀</button>
+      <div class="popover reactions-popover" id="reactionsPopover"></div>
+
+      <button class="ctrl-btn" id="bgBtn" title="Change background">🖼️</button>
+      <div class="popover bg-popover" id="bgPopover"></div>
+
+      <button class="ctrl-btn chat-toggle active" id="chatBtn" title="Toggle chat">
+        <img src="images/chat.png" alt="Chat" class="btn-icon">
+      </button>
+      <button class="ctrl-btn leave" id="leaveBtn">Leave Meeting</button>
+    </div>
   </div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
+<!-- On-device background segmentation (runs fully client-side, no data leaves the browser) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
 <script>
 const params = new URLSearchParams(window.location.search);
 const meetingId = params.get('id');
 if (!meetingId) window.location.href = '/index.html';
 
 let currentUser = null;
-let localStream = null;
+let meeting = null;
 let socket = null;
-const peers = {}; // socketId -> { pc: RTCPeerConnection, videoEl }
+
+// Media pipeline state
+let rawStream = null;        // raw camera+mic from getUserMedia
+let audioTrack = null;
+let outboundVideoTrack = null; // whatever we currently send to peers (camera/bg-processed/screen)
+let cameraOn = true;
+let micOn = true;
+let isScreenSharing = false;
+let screenStream = null;
+let preScreenShareTrack = null; // track to restore after screen share ends
+
+// Virtual background
+const BG_PRESETS = [
+  { id: 'none', label: 'None', emoji: '🚫' },
+  { id: 'blur', label: 'Blur', emoji: '🌫️' },
+  { id: 'office', label: 'Office', url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800' },
+  { id: 'beach', label: 'Beach', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800' },
+  { id: 'space', label: 'Space', url: 'https://images.unsplash.com/photo-1446776653964-20c1d3a81b06?w=800' }
+];
+let currentBg = 'none';
+let customBgImage = null; // Image element for uploaded custom background
+let segmenter = null;
+let segmentationActive = false;
+let bgCanvas, bgCtx, bgSourceVideo;
+let bgAnimHandle = null;
+
+const peers = {}; // socketId -> { pc, name, sharingScreen, handRaised }
 const STUN_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
+// ============================================================
+// INIT + LOBBY
+// ============================================================
 async function init() {
   currentUser = await requireAuth();
   if (!currentUser) return;
 
-  let meeting;
   try {
     const data = await apiGet('/api/meetings/' + meetingId);
     meeting = data.meeting;
   } catch (err) {
-    document.getElementById('centerMsg').textContent = 'You are not authorized to join this meeting: ' + err.message;
+    document.getElementById('lobbyStatus').textContent = 'You are not authorized to join this meeting: ' + err.message;
     return;
   }
+
+  document.getElementById('lobbyTitle').textContent = meeting.title;
+  document.getElementById('lobbySub').textContent =
+    `${meeting.departmentName} • ${meeting.date} at ${meeting.time} • Organized by ${meeting.createdByName}`;
+  document.getElementById('lobbyAvatar').textContent = (currentUser.name || '?').charAt(0).toUpperCase();
+
+  try {
+    rawStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true });
+  } catch (err) {
+    document.getElementById('lobbyStatus').textContent = 'Camera/microphone access denied. You can still join with chat only.';
+    rawStream = new MediaStream();
+  }
+
+  audioTrack = rawStream.getAudioTracks()[0] || null;
+  const camTrack = rawStream.getVideoTracks()[0] || null;
+  cameraOn = !!camTrack;
+  outboundVideoTrack = camTrack;
+
+  const lobbyVideo = document.getElementById('lobbyVideo');
+  lobbyVideo.srcObject = new MediaStream(camTrack ? [camTrack] : []);
+  document.getElementById('lobbyPreview').classList.toggle('cam-off', !cameraOn);
+
+  renderBackgroundPicker(document.getElementById('bgPanelLobby'), lobbyVideo);
+  renderBackgroundPicker(document.getElementById('bgPopover'));
+  renderReactionsPopover();
+
+  document.getElementById('lobbyMicBtn').classList.toggle('off', !(audioTrack && audioTrack.enabled));
+  document.getElementById('lobbyMicBtn').addEventListener('click', () => {
+    if (!audioTrack) return;
+    audioTrack.enabled = !audioTrack.enabled;
+    document.getElementById('lobbyMicBtn').classList.toggle('off', !audioTrack.enabled);
+    micOn = audioTrack.enabled;
+    document.getElementById('micBtn').classList.toggle('off', !micOn);
+  });
+  document.getElementById('lobbyCamBtn').addEventListener('click', () => {
+    if (!camTrack) return;
+    cameraOn = !cameraOn;
+    camTrack.enabled = cameraOn;
+    document.getElementById('lobbyPreview').classList.toggle('cam-off', !cameraOn);
+    document.getElementById('lobbyCamBtn').classList.toggle('off', !cameraOn);
+    document.getElementById('camBtn').classList.toggle('off', !cameraOn);
+  });
+  document.getElementById('lobbyBgBtn').addEventListener('click', () => {
+    document.getElementById('bgPanelLobby').classList.toggle('open');
+  });
+
+  document.getElementById('joinBtn').disabled = false;
+  document.getElementById('joinBtn').addEventListener('click', joinMeeting);
+}
+
+function joinMeeting() {
+  document.getElementById('lobbyOverlay').style.display = 'none';
+  document.getElementById('roomWrap').style.display = 'flex';
 
   document.getElementById('meetingTitle').textContent = meeting.title;
   document.getElementById('meetingSub').textContent =
     `${meeting.departmentName} • ${meeting.date} at ${meeting.time} • Organized by ${meeting.createdByName}`;
-
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  } catch (err) {
-    document.getElementById('centerMsg').textContent =
-      'Camera/microphone access denied or unavailable. You can still use chat.';
-    localStream = new MediaStream(); // empty stream, so peer connections still work for chat-only
-  }
 
   renderLocalTile();
   connectSocket();
 
   document.getElementById('micBtn').addEventListener('click', toggleMic);
   document.getElementById('camBtn').addEventListener('click', toggleCam);
+  document.getElementById('screenShareBtn').addEventListener('click', toggleScreenShare);
+  document.getElementById('handBtn').addEventListener('click', toggleHand);
+  document.getElementById('reactionBtn').addEventListener('click', () => togglePopover('reactionsPopover'));
+  document.getElementById('bgBtn').addEventListener('click', () => togglePopover('bgPopover'));
   document.getElementById('chatBtn').addEventListener('click', toggleChatPanel);
   document.getElementById('leaveBtn').addEventListener('click', leaveMeeting);
   document.getElementById('chatInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChat();
   });
+
+  document.getElementById('micBtn').classList.toggle('off', !micOn);
+  document.getElementById('camBtn').classList.toggle('off', !cameraOn);
+}
+
+function togglePopover(id) {
+  ['reactionsPopover', 'bgPopover'].forEach(p => {
+    if (p !== id) document.getElementById(p).classList.remove('open');
+  });
+  document.getElementById(id).classList.toggle('open');
+}
+
+// ============================================================
+// LOCAL TILE
+// ============================================================
+function currentOutboundStream() {
+  const tracks = [];
+  if (outboundVideoTrack) tracks.push(outboundVideoTrack);
+  if (audioTrack) tracks.push(audioTrack);
+  return new MediaStream(tracks);
 }
 
 function renderLocalTile() {
@@ -100,19 +240,39 @@ function renderLocalTile() {
 
   const videoArea = document.getElementById('videoArea');
   const tile = document.createElement('div');
-  tile.className = 'video-tile';
+  tile.className = 'video-tile local';
   tile.id = 'tile-local';
+  if (!cameraOn) tile.classList.add('cam-off');
   const video = document.createElement('video');
   video.autoplay = true; video.muted = true; video.playsInline = true;
-  video.srcObject = localStream;
+  video.srcObject = currentOutboundStream();
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar-fallback';
+  avatar.innerHTML = `<div class="avatar-circle">${(currentUser.name || '?').charAt(0).toUpperCase()}</div>`;
   const label = document.createElement('div');
   label.className = 'label';
   label.textContent = currentUser.name + ' (You)';
+  const reactionLayer = document.createElement('div');
+  reactionLayer.className = 'reaction-layer';
+  reactionLayer.id = 'reaction-local';
   tile.appendChild(video);
+  tile.appendChild(avatar);
   tile.appendChild(label);
+  tile.appendChild(reactionLayer);
   videoArea.appendChild(tile);
 }
 
+function updateLocalTileStream() {
+  const tile = document.getElementById('tile-local');
+  if (!tile) return;
+  const video = tile.querySelector('video');
+  video.srcObject = currentOutboundStream();
+  tile.classList.toggle('cam-off', !cameraOn && !isScreenSharing);
+}
+
+// ============================================================
+// SOCKET / SIGNALING
+// ============================================================
 function connectSocket() {
   socket = io();
 
@@ -124,13 +284,16 @@ function connectSocket() {
     document.getElementById('centerMsg').textContent = 'Cannot join: ' + msg;
   });
 
-  // Existing participants already in the room -> we call each of them
   socket.on('existing-users', (users) => {
-    users.forEach(u => createPeerConnection(u.socketId, u.name, true));
+    users.forEach(u => {
+      const entry = createPeerConnection(u.socketId, u.name, true);
+      entry.sharingScreen = u.sharingScreen;
+      entry.handRaised = u.handRaised;
+    });
     updateParticipantCount();
+    refreshHandBadges();
   });
 
-  // Someone new joined after us -> they will call us; just prep the tile
   socket.on('user-joined', (u) => {
     addSystemChatLine(`${u.name} joined the meeting`);
     updateParticipantCount();
@@ -161,18 +324,49 @@ function connectSocket() {
       delete peers[u.socketId];
     }
     updateParticipantCount();
+    refreshHandBadges();
   });
 
   socket.on('chat-message', (msg) => {
     addChatLine(msg.name, msg.text, msg.time, msg.from === currentUser.id);
   });
+
+  socket.on('screen-share-changed', ({ socketId, name, sharing }) => {
+    if (peers[socketId]) peers[socketId].sharingScreen = sharing;
+    const tile = document.getElementById('tile-' + socketId);
+    if (tile) {
+      tile.classList.toggle('presenting', sharing);
+      let badge = tile.querySelector('.presenting-badge');
+      if (sharing && !badge) {
+        badge = document.createElement('div');
+        badge.className = 'presenting-badge';
+        badge.textContent = '🖥️ Presenting';
+        tile.appendChild(badge);
+      } else if (!sharing && badge) {
+        badge.remove();
+      }
+    }
+    updateSpotlight();
+    addSystemChatLine(`${name} ${sharing ? 'started' : 'stopped'} sharing their screen`);
+  });
+
+  socket.on('hand-raised', ({ socketId, name, raised }) => {
+    if (peers[socketId]) peers[socketId].handRaised = raised;
+    refreshHandBadges();
+    addSystemChatLine(`${name} ${raised ? 'raised' : 'lowered'} their hand ✋`);
+  });
+
+  socket.on('reaction', ({ socketId, emoji }) => {
+    showFloatingEmoji(socketId === socket.id ? 'local' : socketId, emoji);
+  });
 }
 
 function createPeerConnection(socketId, name, isInitiator) {
   const pc = new RTCPeerConnection(STUN_CONFIG);
-  peers[socketId] = { pc, name };
+  peers[socketId] = { pc, name, sharingScreen: false, handRaised: false };
 
-  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  if (outboundVideoTrack) pc.addTrack(outboundVideoTrack, currentOutboundStream());
+  if (audioTrack) pc.addTrack(audioTrack, currentOutboundStream());
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('signal', { to: socketId, data: e.candidate });
@@ -187,15 +381,24 @@ function createPeerConnection(socketId, name, isInitiator) {
       tile.id = 'tile-' + socketId;
       const video = document.createElement('video');
       video.autoplay = true; video.playsInline = true;
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar-fallback';
+      avatar.innerHTML = `<div class="avatar-circle">${(name || '?').charAt(0).toUpperCase()}</div>`;
       const label = document.createElement('div');
       label.className = 'label';
       label.textContent = name || 'Participant';
+      const reactionLayer = document.createElement('div');
+      reactionLayer.className = 'reaction-layer';
+      reactionLayer.id = 'reaction-' + socketId;
       tile.appendChild(video);
+      tile.appendChild(avatar);
       tile.appendChild(label);
+      tile.appendChild(reactionLayer);
       videoArea.appendChild(tile);
     }
     const videoEl = tile.querySelector('video');
     if (videoEl.srcObject !== e.streams[0]) videoEl.srcObject = e.streams[0];
+    tile.classList.remove('cam-off');
   };
 
   if (isInitiator) {
@@ -209,27 +412,316 @@ function createPeerConnection(socketId, name, isInitiator) {
   return peers[socketId];
 }
 
+function replaceOutboundTrackOnAllPeers(newTrack) {
+  Object.values(peers).forEach(({ pc }) => {
+    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (sender) sender.replaceTrack(newTrack);
+    else if (newTrack) pc.addTrack(newTrack, currentOutboundStream());
+  });
+}
+
 function updateParticipantCount() {
   const count = Object.keys(peers).length + 1;
   document.getElementById('participantCount').textContent = `👥 ${count} in the meeting`;
 }
 
+// ============================================================
+// MIC / CAMERA
+// ============================================================
 function toggleMic() {
-  const track = localStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled;
-  document.getElementById('micBtn').classList.toggle('off', !track.enabled);
-  // Removed the line that overwrites the image with text emojis
+  if (!audioTrack) return;
+  audioTrack.enabled = !audioTrack.enabled;
+  micOn = audioTrack.enabled;
+  document.getElementById('micBtn').classList.toggle('off', !micOn);
 }
 
 function toggleCam() {
-  const track = localStream.getVideoTracks()[0];
-  if (!track) return;
-  track.enabled = !track.enabled;
-  document.getElementById('camBtn').classList.toggle('off', !track.enabled);
-  // Removed the line that overwrites the image with text emojis
+  const camTrack = rawStream.getVideoTracks()[0];
+  if (!camTrack) return;
+  cameraOn = !cameraOn;
+  camTrack.enabled = cameraOn;
+  document.getElementById('camBtn').classList.toggle('off', !cameraOn);
+  updateLocalTileStream();
 }
 
+// ============================================================
+// SCREEN SHARING
+// ============================================================
+async function toggleScreenShare() {
+  if (!isScreenSharing) {
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch (err) {
+      return; // user cancelled the picker
+    }
+    preScreenShareTrack = outboundVideoTrack;
+    const screenTrack = screenStream.getVideoTracks()[0];
+    screenTrack.classList = screenTrack.classList || null; // no-op, keep track plain
+    outboundVideoTrack = screenTrack;
+    isScreenSharing = true;
+
+    replaceOutboundTrackOnAllPeers(screenTrack);
+    updateLocalTileStream();
+    document.getElementById('tile-local').querySelector('video').classList.add('screen-track');
+    document.getElementById('screenShareBtn').classList.add('on-highlight');
+    socket.emit('screen-share-started', { meetingId });
+
+    screenTrack.onended = () => stopScreenShare();
+  } else {
+    stopScreenShare();
+  }
+}
+
+function stopScreenShare() {
+  if (!isScreenSharing) return;
+  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  isScreenSharing = false;
+  outboundVideoTrack = preScreenShareTrack;
+  replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+  updateLocalTileStream();
+  const localVideo = document.getElementById('tile-local').querySelector('video');
+  localVideo.classList.remove('screen-track');
+  document.getElementById('screenShareBtn').classList.remove('on-highlight');
+  socket.emit('screen-share-stopped', { meetingId });
+}
+
+function updateSpotlight() {
+  const videoArea = document.getElementById('videoArea');
+  const presenterId = Object.keys(peers).find(id => peers[id].sharingScreen);
+  videoArea.classList.toggle('has-spotlight', !!presenterId || isScreenSharing);
+  document.querySelectorAll('.video-tile').forEach(t => t.classList.remove('spotlight'));
+  if (isScreenSharing) {
+    document.getElementById('tile-local').classList.add('spotlight');
+  } else if (presenterId) {
+    const tile = document.getElementById('tile-' + presenterId);
+    if (tile) tile.classList.add('spotlight');
+  }
+}
+
+// ============================================================
+// RAISE HAND
+// ============================================================
+let handRaisedLocal = false;
+function toggleHand() {
+  handRaisedLocal = !handRaisedLocal;
+  document.getElementById('handBtn').classList.toggle('on-highlight', handRaisedLocal);
+  socket.emit('raise-hand', { meetingId, raised: handRaisedLocal });
+  refreshHandBadges();
+}
+
+function refreshHandBadges() {
+  document.querySelectorAll('.hand-icon').forEach(el => el.remove());
+  const raisedNames = [];
+  if (handRaisedLocal) {
+    addHandIcon('tile-local');
+    raisedNames.push('You');
+  }
+  Object.entries(peers).forEach(([id, p]) => {
+    if (p.handRaised) {
+      addHandIcon('tile-' + id);
+      raisedNames.push(p.name);
+    }
+  });
+  document.getElementById('raisedHandsStrip').textContent = raisedNames.length
+    ? `✋ ${raisedNames.join(', ')}` : '';
+}
+
+function addHandIcon(tileId) {
+  const tile = document.getElementById(tileId);
+  if (!tile) return;
+  const icon = document.createElement('div');
+  icon.className = 'hand-icon';
+  icon.textContent = '✋';
+  tile.appendChild(icon);
+}
+
+// ============================================================
+// REACTIONS
+// ============================================================
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '👏', '🎉', '🙌', '✅'];
+function renderReactionsPopover() {
+  const el = document.getElementById('reactionsPopover');
+  el.innerHTML = REACTION_EMOJIS.map(e => `<button type="button" onclick="sendReaction('${e}')">${e}</button>`).join('');
+}
+function sendReaction(emoji) {
+  socket.emit('reaction', { meetingId, emoji });
+  showFloatingEmoji('local', emoji);
+  document.getElementById('reactionsPopover').classList.remove('open');
+}
+function showFloatingEmoji(tileKey, emoji) {
+  const layer = document.getElementById('reaction-' + tileKey);
+  if (!layer) return;
+  const span = document.createElement('span');
+  span.className = 'floating-emoji';
+  span.textContent = emoji;
+  span.style.marginLeft = (Math.random() * 40 - 20) + 'px';
+  layer.appendChild(span);
+  setTimeout(() => span.remove(), 1800);
+}
+
+// ============================================================
+// VIRTUAL BACKGROUND (blur / preset image / custom upload)
+// ============================================================
+function renderBackgroundPicker(container, previewVideoOverride) {
+  if (!container) return;
+  container.classList.add('bg-popover');
+  container.innerHTML = `
+    <h4>Background</h4>
+    <div class="bg-options">
+      ${BG_PRESETS.map(p => `
+        <div class="bg-option ${p.id === currentBg ? 'selected' : ''}" data-bg="${p.id}"
+             style="${p.url ? `background-image:url('${p.url}')` : ''}"
+             title="${p.label}">${p.url ? '' : p.emoji}</div>
+      `).join('')}
+      <div class="bg-option ${currentBg === 'custom' ? 'selected' : ''}" data-bg="custom" id="customBgThumb-${container === document.getElementById('bgPanelLobby') ? 'lobby' : 'main'}" title="Custom">📁</div>
+    </div>
+    <div class="bg-upload-row">
+      <label>Upload image
+        <input type="file" accept="image/*" class="bg-upload-input">
+      </label>
+    </div>
+  `;
+  container.querySelectorAll('.bg-option[data-bg]').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const bgId = opt.dataset.bg;
+      if (bgId === 'custom' && !customBgImage) return; // must upload first
+      applyBackground(bgId, previewVideoOverride);
+    });
+  });
+  container.querySelector('.bg-upload-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      customBgImage = img;
+      applyBackground('custom', previewVideoOverride);
+      // sync the thumbnail + selection state in both popovers
+      document.querySelectorAll('[id^="customBgThumb-"]').forEach(el => {
+        el.style.backgroundImage = `url('${img.src}')`;
+        el.textContent = '';
+      });
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function applyBackground(bgId, previewVideoOverride) {
+  currentBg = bgId;
+  document.querySelectorAll('.bg-option').forEach(el => {
+    el.classList.toggle('selected', el.dataset.bg === bgId);
+  });
+
+  const camTrack = rawStream.getVideoTracks()[0];
+  if (!camTrack) return;
+
+  if (bgId === 'none') {
+    stopSegmentation();
+    if (isScreenSharing) return; // don't touch outbound track while presenting
+    outboundVideoTrack = camTrack;
+    replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+    const el = previewVideoOverride || document.querySelector('#tile-local video');
+    if (el) el.srcObject = new MediaStream([camTrack]);
+    if (!previewVideoOverride) updateLocalTileStream();
+    return;
+  }
+
+  let bgImageEl = null;
+  if (bgId === 'custom') bgImageEl = customBgImage;
+  else {
+    const preset = BG_PRESETS.find(p => p.id === bgId);
+    if (preset && preset.url) {
+      bgImageEl = await loadImage(preset.url);
+    }
+  }
+
+  await startSegmentation(camTrack, bgId, bgImageEl, previewVideoOverride);
+}
+
+function loadImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+async function startSegmentation(camTrack, mode, bgImageEl, previewVideoOverride) {
+  stopSegmentation();
+
+  bgSourceVideo = document.createElement('video');
+  bgSourceVideo.srcObject = new MediaStream([camTrack]);
+  bgSourceVideo.muted = true;
+  await bgSourceVideo.play();
+
+  const w = camTrack.getSettings().width || 1280;
+  const h = camTrack.getSettings().height || 720;
+  bgCanvas = document.createElement('canvas');
+  bgCanvas.width = w; bgCanvas.height = h;
+  bgCtx = bgCanvas.getContext('2d');
+
+  if (!segmenter) {
+    segmenter = new SelfieSegmentation({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+    });
+    segmenter.setOptions({ modelSelection: 1 });
+  }
+
+  segmenter.onResults((results) => {
+    bgCtx.save();
+    bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+
+    // draw the segmentation mask, then keep only the person pixels
+    bgCtx.drawImage(results.segmentationMask, 0, 0, bgCanvas.width, bgCanvas.height);
+    bgCtx.globalCompositeOperation = 'source-in';
+    bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
+
+    // draw the chosen background behind the person
+    bgCtx.globalCompositeOperation = 'destination-over';
+    if (mode === 'blur') {
+      bgCtx.filter = 'blur(14px)';
+      bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
+      bgCtx.filter = 'none';
+    } else if (bgImageEl) {
+      bgCtx.drawImage(bgImageEl, 0, 0, bgCanvas.width, bgCanvas.height);
+    } else {
+      bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
+    }
+    bgCtx.restore();
+  });
+
+  segmentationActive = true;
+  async function frameLoop() {
+    if (!segmentationActive) return;
+    await segmenter.send({ image: bgSourceVideo });
+    bgAnimHandle = requestAnimationFrame(frameLoop);
+  }
+  frameLoop();
+
+  const canvasStream = bgCanvas.captureStream(25);
+  const processedTrack = canvasStream.getVideoTracks()[0];
+
+  if (!isScreenSharing) {
+    outboundVideoTrack = processedTrack;
+    replaceOutboundTrackOnAllPeers(processedTrack);
+  }
+
+  const el = previewVideoOverride || document.querySelector('#tile-local video');
+  if (el) el.srcObject = canvasStream;
+  if (!previewVideoOverride) updateLocalTileStream();
+}
+
+function stopSegmentation() {
+  segmentationActive = false;
+  if (bgAnimHandle) cancelAnimationFrame(bgAnimHandle);
+  bgAnimHandle = null;
+  if (bgSourceVideo) { bgSourceVideo.pause(); bgSourceVideo.srcObject = null; }
+}
+
+// ============================================================
+// CHAT
+// ============================================================
 function toggleChatPanel() {
   const panel = document.getElementById('chatPanel');
   panel.classList.toggle('hidden');
@@ -265,15 +757,31 @@ function addSystemChatLine(text) {
   box.scrollTop = box.scrollHeight;
 }
 
+// ============================================================
+// LEAVE
+// ============================================================
 function leaveMeeting() {
-  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  stopSegmentation();
+  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  if (rawStream) rawStream.getTracks().forEach(t => t.stop());
   Object.values(peers).forEach(p => p.pc.close());
   if (socket) socket.disconnect();
   redirectByRole(currentUser.role);
 }
 
 window.addEventListener('beforeunload', () => {
-  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  stopSegmentation();
+  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+  if (rawStream) rawStream.getTracks().forEach(t => t.stop());
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#reactionBtn') && !e.target.closest('#reactionsPopover')) {
+    document.getElementById('reactionsPopover').classList.remove('open');
+  }
+  if (!e.target.closest('#bgBtn') && !e.target.closest('#bgPopover')) {
+    document.getElementById('bgPopover').classList.remove('open');
+  }
 });
 
 init();

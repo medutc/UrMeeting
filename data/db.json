@@ -60,17 +60,17 @@
       "createdAt": "2026-07-17T10:23:36.501Z"
     },
     {
-      "id": "02700d24-22d5-43d3-b18b-2cf274cb689a",
-      "title": "meet",
-      "description": "1",
-      "date": "2026-07-17",
-      "time": "12:13",
+      "id": "063df987-514f-44bc-9693-62bfc916703d",
+      "title": "meet1",
+      "description": "description",
+      "date": "2026-07-20",
+      "time": "15:43",
       "departmentId": "operations",
       "createdBy": "c14883ff-5b51-4c0f-858e-4b7abe938a71",
       "participantIds": [
         "1ef675a7-5142-42a6-8547-36c83b12c4b0"
       ],
-      "createdAt": "2026-07-17T11:11:20.772Z"
+      "createdAt": "2026-07-20T14:42:23.234Z"
     }
   ],
   "messages": [
