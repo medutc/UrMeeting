@@ -376,105 +376,62 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 }
 
 /* ============================================================
-   ADMIN CONTROLS STYLES
+   OPTIONS + OWNER MODERATION PANEL
    ============================================================ */
 
+.options-popover { width: 230px; padding: 6px; }
+.option-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 10px; color: #e5e7eb; background: transparent; border: 0; border-radius: 8px; cursor: pointer;
+}
+.option-btn:hover, .option-btn.active { background: #334155; }
+.option-btn > span:first-child { font-size: 18px; }
+.option-btn strong, .option-btn small { display: block; }
+.option-btn strong { font-size: 13px; }
+.option-btn small { color: #94a3b8; font-size: 11px; margin-top: 2px; }
+.option-btn.active small { color: #86efac; }
+.admin-settings-btn { background: #7c3aed; }
+.admin-settings-btn:hover { background: #6d28d9; }
+
+.admin-panel-backdrop {
+  position: fixed; inset: 0; z-index: 1100; display: flex; justify-content: flex-end;
+  background: rgba(2, 6, 23, 0.7); backdrop-filter: blur(3px);
+}
+.admin-panel-backdrop[hidden] { display: none; }
 .admin-controls {
-  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-  padding: 12px;
-  border-radius: 8px;
-  margin-left: 14px;
-  max-width: 400px;
-  max-height: 300px;
-  overflow-y: auto;
-  border: 1px solid #7c3aed;
+  width: min(460px, 100%); height: 100%; box-sizing: border-box; overflow-y: auto;
+  padding: 24px; color: #f8fafc; background: #0f172a; border-left: 1px solid #334155;
+  box-shadow: -18px 0 40px rgba(0,0,0,0.35);
 }
-
 .admin-header {
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255,255,255,0.2);
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid #334155;
 }
-
-.admin-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
+.admin-eyebrow { margin: 0 0 5px; color: #a78bfa; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; font-weight: 700; }
+.admin-header h2 { margin: 0; font-size: 20px; }
+.admin-section { margin-bottom: 24px; }
+.admin-section h3 { margin: 0; font-size: 13px; color: #cbd5e1; }
+.admin-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+#adminParticipantCount { color: #94a3b8; font-size: 12px; }
+.admin-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.admin-btn, .control-btn {
+  border: 1px solid #475569; color: #f8fafc; background: #1e293b; border-radius: 7px; cursor: pointer;
+  font-weight: 600; transition: background .2s ease, border-color .2s ease, transform .2s ease;
 }
-
-.admin-btn {
-  background: rgba(255,255,255,0.2);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.3);
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.admin-btn:hover {
-  background: rgba(255,255,255,0.3);
-  border-color: rgba(255,255,255,0.5);
-}
-
-.admin-btn.active {
-  background: #ec4899;
-  border-color: #ec4899;
-}
-
-.participants-list {
-  max-height: 250px;
-  overflow-y: auto;
-}
-
-.participant-item {
-  background: rgba(255,255,255,0.1);
-  padding: 8px;
-  margin-bottom: 6px;
-  border-radius: 6px;
-  border-left: 3px solid #ec4899;
-}
-
-.participant-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.participant-name {
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
-  flex: 1;
-}
-
-.participant-controls {
-  display: flex;
-  gap: 4px;
-}
-
-.control-btn {
-  background: rgba(255,255,255,0.15);
-  color: #fff;
-  border: none;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.control-btn:hover {
-  background: rgba(255,255,255,0.3);
-  transform: scale(1.1);
-}
+.admin-btn { min-height: 38px; padding: 8px 10px; font-size: 12px; }
+.admin-btn:hover, .control-btn:hover { background: #334155; border-color: #64748b; }
+.admin-btn:active, .control-btn:active { transform: translateY(1px); }
+.admin-btn.danger, .control-btn.danger { color: #fecaca; border-color: #7f1d1d; background: #450a0a; }
+.admin-btn.danger:hover, .control-btn.danger:hover { background: #7f1d1d; }
+.participants-list { display: grid; gap: 8px; max-height: 48vh; overflow-y: auto; }
+.participants-empty { margin: 0; padding: 16px; color: #94a3b8; text-align: center; background: #111c31; border-radius: 8px; font-size: 13px; }
+.participant-item { padding: 12px; background: #111c31; border: 1px solid #24334b; border-radius: 9px; }
+.participant-info { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.participant-name { font-size: 13px; font-weight: 700; color: #f8fafc; }
+.participant-state { color: #94a3b8; font-size: 11px; }
+.participant-controls { display: flex; flex-wrap: wrap; gap: 6px; }
+.control-btn { padding: 6px 8px; font-size: 11px; }
+.admin-note { margin: 0; padding: 10px 12px; color: #94a3b8; background: #172033; border-radius: 8px; font-size: 12px; line-height: 1.45; }
 
 /* ============================================================
    LIVE CAPTIONS DISPLAY
@@ -554,10 +511,6 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 }
 
 @media (max-width: 1024px) {
-  .admin-controls {
-    max-width: 300px;
-  }
-
   .captions-display {
     width: 350px;
     max-height: 250px;
@@ -566,9 +519,7 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 
 @media (max-width: 768px) {
   .admin-controls {
-    margin-left: 0;
-    margin-top: 10px;
-    max-width: 100%;
+    padding: 18px;
   }
 
   .captions-display {

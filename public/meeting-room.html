@@ -50,19 +50,6 @@
         <div class="sub" id="participantCount"></div>
       </div>
       
-      <!-- ADMIN CONTROLS PANEL (shown only if user is meeting owner) -->
-      <div class="admin-controls" id="adminControls" style="display:none;">
-        <div class="admin-header">👑 Admin Panel</div>
-        
-        <div class="admin-buttons">
-          <button class="admin-btn" id="muteAllBtn" title="Mute all participants">🔇 Mute All</button>
-          <button class="admin-btn" id="unmuteAllBtn" title="Unmute all participants">🔊 Unmute All</button>
-          <button class="admin-btn" id="stopAllScreenBtn" title="Stop all screen shares">⛔ Stop All Screens</button>
-          <button class="admin-btn" id="toggleCaptionsBtn" title="Toggle live captions">📝 Captions</button>
-        </div>
-        
-        <div class="participants-list" id="participantsList"></div>
-      </div>
     </div>
 
     <div class="room-body" id="roomBody">
@@ -104,11 +91,57 @@
       <button class="ctrl-btn" id="bgBtn" title="Change background">🖼️</button>
       <div class="popover bg-popover" id="bgPopover"></div>
 
+      <button class="ctrl-btn" id="optionsBtn" title="More meeting options" aria-label="More meeting options" aria-expanded="false">•••</button>
+      <div class="popover options-popover" id="optionsPopover">
+        <button class="option-btn" id="toggleCaptionsBtn" type="button" aria-pressed="false">
+          <span aria-hidden="true">📝</span>
+          <span>
+            <strong>Live captions</strong>
+            <small id="captionsOptionStatus">Off</small>
+          </span>
+        </button>
+      </div>
+
+      <button class="ctrl-btn admin-settings-btn" id="adminSettingsBtn" title="Open meeting controls" aria-label="Open meeting controls" aria-expanded="false" style="display:none;">⚙</button>
+
       <button class="ctrl-btn chat-toggle active" id="chatBtn" title="Toggle chat">
         <img src="images/chat.png" alt="Chat" class="btn-icon">
       </button>
       <button class="ctrl-btn leave" id="leaveBtn">Leave Meeting</button>
     </div>
+  </div>
+
+  <div class="admin-panel-backdrop" id="adminPanelBackdrop" hidden>
+    <aside class="admin-controls" id="adminControls" role="dialog" aria-modal="true" aria-labelledby="adminPanelTitle">
+      <div class="admin-header">
+        <div>
+          <p class="admin-eyebrow">Meeting owner controls</p>
+          <h2 id="adminPanelTitle">Moderate attendees</h2>
+        </div>
+        <button class="close-btn" id="closeAdminPanelBtn" type="button" title="Close meeting controls" aria-label="Close meeting controls">✕</button>
+      </div>
+
+      <section class="admin-section" aria-labelledby="everyoneControlsTitle">
+        <h3 id="everyoneControlsTitle">Everyone</h3>
+        <div class="admin-buttons">
+          <button class="admin-btn" id="muteAllBtn" type="button">Mute all</button>
+          <button class="admin-btn" id="unmuteAllBtn" type="button">Unmute all</button>
+          <button class="admin-btn" id="cameraOffAllBtn" type="button">Turn cameras off</button>
+          <button class="admin-btn" id="cameraOnAllBtn" type="button">Turn cameras on</button>
+          <button class="admin-btn danger" id="stopAllScreenBtn" type="button">Stop all sharing</button>
+        </div>
+      </section>
+
+      <section class="admin-section" aria-labelledby="attendeeControlsTitle">
+        <div class="admin-section-heading">
+          <h3 id="attendeeControlsTitle">Attendees</h3>
+          <span id="adminParticipantCount">0</span>
+        </div>
+        <div class="participants-list" id="participantsList"></div>
+      </section>
+
+      <p class="admin-note">A browser only lets a participant start screen sharing, but you can stop any active share.</p>
+    </aside>
   </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -160,7 +193,15 @@ let bgAnimHandle = null;
 const peers = {};
 const remoteState = {};
 function getRemoteState(socketId) {
-  if (!remoteState[socketId]) remoteState[socketId] = { name: null, handRaised: false, sharingScreen: false, micMuted: false };
+  if (!remoteState[socketId]) {
+    remoteState[socketId] = {
+      name: null,
+      handRaised: false,
+      sharingScreen: false,
+      micMuted: false,
+      cameraOn: true
+    };
+  }
   return remoteState[socketId];
 }
 const STUN_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -364,136 +405,143 @@ function toggleTileFullscreen(tileId) {
 // ============================================================
 
 function checkIfAdmin() {
-  if (meeting && meeting.createdById === currentUser.id) {
-    isAdmin = true;
-    document.getElementById('adminControls').style.display = 'block';
-    initAdminControls();
-  }
+  // The meeting API returns `createdBy`; `createdById` never exists.
+  isAdmin = Boolean(meeting && currentUser && meeting.createdBy === currentUser.id);
+  if (!isAdmin) return;
+
+  document.getElementById('adminSettingsBtn').style.display = 'flex';
+  initAdminControls();
+  updateParticipantsList();
 }
 
 function initAdminControls() {
-  document.getElementById('muteAllBtn').addEventListener('click', muteAllParticipants);
-  document.getElementById('unmuteAllBtn').addEventListener('click', unmuteAllParticipants);
-  document.getElementById('stopAllScreenBtn').addEventListener('click', stopAllScreenShares);
-  document.getElementById('toggleCaptionsBtn').addEventListener('click', toggleLiveCaptions);
-  document.getElementById('closeCaptionsBtn').addEventListener('click', () => {
-    captionsEnabled = false;
-    document.getElementById('captionsDisplay').style.display = 'none';
-    stopSpeechRecognition();
+  document.getElementById('adminSettingsBtn').addEventListener('click', openAdminPanel);
+  document.getElementById('closeAdminPanelBtn').addEventListener('click', closeAdminPanel);
+  document.getElementById('adminPanelBackdrop').addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeAdminPanel();
   });
+  document.getElementById('muteAllBtn').addEventListener('click', () => moderateEveryone('admin-audio-state', { muted: true }, 'Muted all attendees'));
+  document.getElementById('unmuteAllBtn').addEventListener('click', () => moderateEveryone('admin-audio-state', { muted: false }, 'Unmuted all attendees'));
+  document.getElementById('cameraOffAllBtn').addEventListener('click', () => moderateEveryone('admin-camera-state', { enabled: false }, 'Turned off all attendee cameras'));
+  document.getElementById('cameraOnAllBtn').addEventListener('click', () => moderateEveryone('admin-camera-state', { enabled: true }, 'Turned on all attendee cameras'));
+  document.getElementById('stopAllScreenBtn').addEventListener('click', () => moderateEveryone('admin-stop-screen-share', {}, 'Stopped all attendee screen shares'));
 }
 
-function muteAllParticipants() {
+function openAdminPanel() {
   if (!isAdmin) return;
-  socket.emit('admin-mute-all', { meetingId });
-  addSystemChatLine('🔇 Admin muted all participants');
+  const backdrop = document.getElementById('adminPanelBackdrop');
+  backdrop.hidden = false;
+  document.getElementById('adminSettingsBtn').setAttribute('aria-expanded', 'true');
+  updateParticipantsList();
+  document.getElementById('closeAdminPanelBtn').focus();
 }
 
-function unmuteAllParticipants() {
-  if (!isAdmin) return;
-  socket.emit('admin-unmute-all', { meetingId });
-  addSystemChatLine('🔊 Admin unmuted all participants');
+function closeAdminPanel() {
+  document.getElementById('adminPanelBackdrop').hidden = true;
+  document.getElementById('adminSettingsBtn').setAttribute('aria-expanded', 'false');
+  document.getElementById('adminSettingsBtn').focus();
 }
 
-function muteParticipant(socketId) {
-  if (!isAdmin) return;
-  socket.emit('admin-mute-user', { meetingId, targetSocketId: socketId });
+function moderateEveryone(action, payload, message) {
+  if (!isAdmin || !socket) return;
+  socket.emit(action, { meetingId, ...payload });
+  addSystemChatLine(message);
 }
 
-function unmuteParticipant(socketId) {
-  if (!isAdmin) return;
-  socket.emit('admin-unmute-user', { meetingId, targetSocketId: socketId });
+function moderateParticipant(socketId, action, payload, message) {
+  if (!isAdmin || !socket) return;
+  socket.emit(action, { meetingId, targetSocketId: socketId, ...payload });
+  addSystemChatLine(message);
 }
 
-function disableCameraForUser(socketId) {
-  if (!isAdmin) return;
-  socket.emit('admin-disable-camera', { meetingId, targetSocketId: socketId });
+function makeParticipantControl(label, title, onClick, danger = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'control-btn' + (danger ? ' danger' : '');
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener('click', onClick);
+  return button;
 }
 
-function stopScreenShareForUser(socketId) {
-  if (!isAdmin) return;
-  socket.emit('admin-stop-screen-share', { meetingId, targetSocketId: socketId });
-}
+function setCaptionsEnabled(enabled, announce = true) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (enabled && !SpeechRecognition) {
+    alert('Live captions require Chrome or another browser that supports Web Speech Recognition.');
+    return;
+  }
 
-function stopAllScreenShares() {
-  if (!isAdmin) return;
-  socket.emit('admin-stop-all-screens', { meetingId });
-  addSystemChatLine('⛔ Admin stopped all screen shares');
+  captionsEnabled = enabled;
+  const captionsDisplay = document.getElementById('captionsDisplay');
+  const captionsButton = document.getElementById('toggleCaptionsBtn');
+  captionsDisplay.style.display = enabled ? 'flex' : 'none';
+  captionsButton.classList.toggle('active', enabled);
+  captionsButton.setAttribute('aria-pressed', String(enabled));
+  document.getElementById('captionsOptionStatus').textContent = enabled ? 'On' : 'Off';
+
+  if (enabled) startSpeechRecognition();
+  else stopSpeechRecognition();
+
+  if (announce) addSystemChatLine(`Live captions ${enabled ? 'enabled' : 'disabled'}`);
 }
 
 function toggleLiveCaptions() {
-  captionsEnabled = !captionsEnabled;
-  
-  if (captionsEnabled) {
-    document.getElementById('captionsDisplay').style.display = 'block';
-    document.getElementById('toggleCaptionsBtn').classList.add('active');
-    startSpeechRecognition();
-    addSystemChatLine('📝 Live captions enabled');
-  } else {
-    document.getElementById('captionsDisplay').style.display = 'none';
-    document.getElementById('toggleCaptionsBtn').classList.remove('active');
-    stopSpeechRecognition();
-    addSystemChatLine('📝 Live captions disabled');
-  }
+  setCaptionsEnabled(!captionsEnabled);
 }
 
 function startSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    alert('Speech Recognition not supported in this browser');
-    return;
-  }
+  if (!SpeechRecognition || recognition) return;
 
-  recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.language = 'en-US';
+  const instance = new SpeechRecognition();
+  recognition = instance;
+  instance.continuous = true;
+  instance.interimResults = true;
+  instance.language = navigator.language || 'en-US';
 
-  recognition.onstart = () => {
-    console.log('Speech recognition started');
-  };
-
-  recognition.onresult = (event) => {
+  instance.onresult = (event) => {
     let interimTranscript = '';
     let finalTranscript = '';
-
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-
-      if (event.results[i].isFinal) {
-        finalTranscript += transcript + ' ';
-      } else {
-        interimTranscript += transcript;
-      }
+      const transcript = event.results[i][0].transcript.trim();
+      if (event.results[i].isFinal) finalTranscript += `${transcript} `;
+      else interimTranscript += transcript;
     }
 
-    if (finalTranscript) {
-      displayCaption(currentUser.name + ': ' + finalTranscript, false);
-      socket.emit('caption-text', { meetingId, speaker: currentUser.name, text: finalTranscript });
+    if (finalTranscript.trim()) {
+      const text = finalTranscript.trim();
+      displayCaption(`${currentUser.name}: ${text}`, false);
+      socket?.emit('caption-text', { meetingId, text });
     }
+    if (interimTranscript) displayCaption(`${currentUser.name}: ${interimTranscript}`, true);
+  };
 
-    if (interimTranscript) {
-      displayCaption(currentUser.name + ': ' + interimTranscript, true);
+  instance.onerror = (event) => {
+    console.warn('Speech recognition error:', event.error);
+    if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
+      setCaptionsEnabled(false, false);
+      addSystemChatLine('Live captions were stopped because microphone access is unavailable.');
     }
   };
 
-  recognition.onerror = (event) => {
-    console.log('Speech recognition error:', event.error);
+  instance.onend = () => {
+    if (recognition === instance) recognition = null;
+    if (captionsEnabled) window.setTimeout(startSpeechRecognition, 250);
   };
 
-  recognition.onend = () => {
-    if (captionsEnabled) {
-      recognition.start();
-    }
-  };
-
-  recognition.start();
+  try {
+    instance.start();
+  } catch (error) {
+    recognition = null;
+    console.warn('Could not start speech recognition:', error);
+  }
 }
 
 function stopSpeechRecognition() {
-  if (recognition) {
-    recognition.stop();
-  }
+  if (!recognition) return;
+  const instance = recognition;
+  recognition = null;
+  instance.abort();
 }
 
 function displayCaption(text, isInterim) {
@@ -528,33 +576,45 @@ function displayCaption(text, isInterim) {
 
 function updateParticipantsList() {
   if (!isAdmin) return;
-  
   const list = document.getElementById('participantsList');
   list.innerHTML = '';
 
-  const localItem = document.createElement('div');
-  localItem.className = 'participant-item';
-  localItem.innerHTML = `
-    <span class="participant-name">👤 ${currentUser.name} (You - Owner)</span>
-  `;
-  list.appendChild(localItem);
+  const attendees = Object.entries(remoteState).filter(([socketId, state]) => socketId !== socket?.id && state.name);
+  document.getElementById('adminParticipantCount').textContent = `${attendees.length} online`;
+  if (!attendees.length) {
+    const empty = document.createElement('p');
+    empty.className = 'participants-empty';
+    empty.textContent = 'No other attendees are in the room yet.';
+    list.appendChild(empty);
+    return;
+  }
 
-  Object.entries(peers).forEach(([socketId, peer]) => {
+  attendees.sort(([, a], [, b]) => a.name.localeCompare(b.name));
+  attendees.forEach(([socketId, state]) => {
     const item = document.createElement('div');
     item.className = 'participant-item';
-    const micStatus = remoteState[socketId]?.micMuted ? '🔇' : '🎤';
-    
-    item.innerHTML = `
-      <div class="participant-info">
-        <span class="participant-name">${peer.name} ${micStatus}</span>
-        <div class="participant-controls">
-          <button class="control-btn" onclick="muteParticipant('${socketId}')" title="Mute">🔇</button>
-          <button class="control-btn" onclick="unmuteParticipant('${socketId}')" title="Unmute">🔊</button>
-          <button class="control-btn" onclick="disableCameraForUser('${socketId}')" title="Disable Camera">📹</button>
-          ${remoteState[socketId]?.sharingScreen ? `<button class="control-btn" onclick="stopScreenShareForUser('${socketId}')" title="Stop Screen Share">⛔</button>` : ''}
-        </div>
-      </div>
-    `;
+
+    const info = document.createElement('div');
+    info.className = 'participant-info';
+    const name = document.createElement('span');
+    name.className = 'participant-name';
+    name.textContent = state.name;
+    const stateText = document.createElement('span');
+    stateText.className = 'participant-state';
+    stateText.textContent = `${state.micMuted ? 'Muted' : 'Mic on'} · ${state.cameraOn ? 'Camera on' : 'Camera off'}${state.sharingScreen ? ' · Sharing' : ''}`;
+    info.append(name, stateText);
+
+    const controls = document.createElement('div');
+    controls.className = 'participant-controls';
+    controls.append(
+      makeParticipantControl('Mute', `Mute ${state.name}`, () => moderateParticipant(socketId, 'admin-audio-state', { muted: true }, `Muted ${state.name}`)),
+      makeParticipantControl('Unmute', `Unmute ${state.name}`, () => moderateParticipant(socketId, 'admin-audio-state', { muted: false }, `Unmuted ${state.name}`)),
+      makeParticipantControl(state.cameraOn ? 'Camera off' : 'Camera on', `${state.cameraOn ? 'Turn off' : 'Turn on'} ${state.name}'s camera`, () => moderateParticipant(socketId, 'admin-camera-state', { enabled: !state.cameraOn }, `${state.cameraOn ? 'Turned off' : 'Turned on'} ${state.name}'s camera`))
+    );
+    if (state.sharingScreen) {
+      controls.append(makeParticipantControl('Stop share', `Stop ${state.name}'s screen share`, () => moderateParticipant(socketId, 'admin-stop-screen-share', {}, `Stopped ${state.name}'s screen share`), true));
+    }
+    item.append(info, controls);
     list.appendChild(item);
   });
 }
@@ -641,6 +701,9 @@ function joinMeeting() {
   document.getElementById('handBtn').addEventListener('click', toggleHand);
   document.getElementById('reactionBtn').addEventListener('click', () => togglePopover('reactionsPopover'));
   document.getElementById('bgBtn').addEventListener('click', () => togglePopover('bgPopover'));
+  document.getElementById('optionsBtn').addEventListener('click', () => togglePopover('optionsPopover'));
+  document.getElementById('toggleCaptionsBtn').addEventListener('click', toggleLiveCaptions);
+  document.getElementById('closeCaptionsBtn').addEventListener('click', () => setCaptionsEnabled(false));
   document.getElementById('chatBtn').addEventListener('click', toggleChatPanel);
   document.getElementById('leaveBtn').addEventListener('click', leaveMeeting);
   document.getElementById('chatInput').addEventListener('keydown', (e) => {
@@ -650,6 +713,10 @@ function joinMeeting() {
   document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenMode);
   
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('adminPanelBackdrop').hidden) {
+      closeAdminPanel();
+      return;
+    }
     if (e.key === 'Escape' && (isFullscreenMode || fullscreenTileId)) {
       exitFullscreen();
     }
@@ -660,10 +727,14 @@ function joinMeeting() {
 }
 
 function togglePopover(id) {
-  ['reactionsPopover', 'bgPopover'].forEach(p => {
+  ['reactionsPopover', 'bgPopover', 'optionsPopover'].forEach(p => {
     if (p !== id) document.getElementById(p).classList.remove('open');
   });
-  document.getElementById(id).classList.toggle('open');
+  const popover = document.getElementById(id);
+  popover.classList.toggle('open');
+  if (id === 'optionsPopover') {
+    document.getElementById('optionsBtn').setAttribute('aria-expanded', String(popover.classList.contains('open')));
+  }
 }
 
 // ============================================================
@@ -731,8 +802,9 @@ function connectSocket() {
   socket = io();
 
   socket.on('connect', () => {
-    socket.emit('join-room', { meetingId, userId: currentUser.id });
+    socket.emit('join-room', { meetingId });
     socket.emit('mic-changed', { meetingId, muted: !micOn });
+    socket.emit('camera-changed', { meetingId, enabled: cameraOn });
     applyMutedIcon('tile-local', !micOn);
   });
 
@@ -747,6 +819,7 @@ function connectSocket() {
       state.sharingScreen = !!u.sharingScreen;
       state.handRaised = !!u.handRaised;
       state.micMuted = !!u.micMuted;
+      state.cameraOn = u.cameraOn !== false;
       const entry = createPeerConnection(u.socketId, u.name, true);
       entry.sharingScreen = state.sharingScreen;
       entry.handRaised = state.handRaised;
@@ -757,6 +830,12 @@ function connectSocket() {
   });
 
   socket.on('user-joined', (u) => {
+    const state = getRemoteState(u.socketId);
+    state.name = u.name;
+    state.sharingScreen = !!u.sharingScreen;
+    state.handRaised = !!u.handRaised;
+    state.micMuted = !!u.micMuted;
+    state.cameraOn = u.cameraOn !== false;
     addSystemChatLine(`${u.name} joined the meeting`);
     playNotificationSound('user-join');
     updateParticipantCount();
@@ -806,6 +885,7 @@ function connectSocket() {
     const tile = document.getElementById('tile-' + socketId);
     if (tile) {
       tile.classList.toggle('presenting', sharing);
+      tile.classList.toggle('cam-off', !state.cameraOn && !sharing);
       let badge = tile.querySelector('.presenting-badge');
       if (sharing && !badge) {
         badge = document.createElement('div');
@@ -844,47 +924,36 @@ function connectSocket() {
     updateParticipantsList();
   });
 
-  // ADMIN COMMAND HANDLERS
-  socket.on('admin-mute-me', () => {
-    if (audioTrack) {
-      audioTrack.enabled = false;
-      micOn = false;
-      document.getElementById('micBtn').classList.add('off');
-      applyMutedIcon('tile-local', true);
-      addSystemChatLine('🔇 Admin muted you');
-    }
+  socket.on('camera-changed', ({ socketId, enabled }) => {
+    const state = getRemoteState(socketId);
+    state.cameraOn = !!enabled;
+    const tile = document.getElementById('tile-' + socketId);
+    if (tile) tile.classList.toggle('cam-off', !state.cameraOn && !state.sharingScreen);
+    updateParticipantsList();
   });
 
-  socket.on('admin-unmute-me', () => {
-    if (audioTrack) {
-      audioTrack.enabled = true;
-      micOn = true;
-      document.getElementById('micBtn').classList.remove('off');
-      applyMutedIcon('tile-local', false);
-      addSystemChatLine('🔊 Admin unmuted you');
-    }
+  // These commands originate from the verified meeting owner on the server.
+  socket.on('admin-audio-state', ({ muted }) => {
+    setMicEnabled(!muted);
+    addSystemChatLine(`The meeting owner ${muted ? 'muted' : 'unmuted'} you.`);
   });
 
-  socket.on('admin-disable-camera-me', () => {
-    const camTrack = rawStream.getVideoTracks()[0];
-    if (camTrack) {
-      cameraOn = false;
-      camTrack.enabled = false;
-      document.getElementById('camBtn').classList.add('off');
-      updateLocalTileStream();
-      addSystemChatLine('📹 Admin disabled your camera');
-    }
+  socket.on('admin-camera-state', ({ enabled }) => {
+    setCameraEnabled(!!enabled);
+    addSystemChatLine(`The meeting owner turned your camera ${enabled ? 'on' : 'off'}.`);
   });
 
-  socket.on('admin-stop-screen-share-me', () => {
+  socket.on('admin-stop-screen-share', () => {
     if (isScreenSharing) {
       stopScreenShare();
-      addSystemChatLine('⛔ Admin stopped your screen share');
+      addSystemChatLine('The meeting owner stopped your screen share.');
     }
   });
 
+  socket.on('moderation-error', (message) => addSystemChatLine(`Meeting controls: ${message}`));
+
   socket.on('caption-received', ({ speaker, text }) => {
-    displayCaption(speaker + ': ' + text, false);
+    if (captionsEnabled) displayCaption(`${speaker}: ${text}`, false);
   });
 }
 
@@ -958,6 +1027,7 @@ function createPeerConnection(socketId, name, isInitiator) {
         }
       }
       applyMutedIcon(tile.id, state.micMuted);
+      tile.classList.toggle('cam-off', !state.cameraOn && !state.sharingScreen);
       refreshHandBadges();
       updateSpotlight();
     }
@@ -974,7 +1044,8 @@ function createPeerConnection(socketId, name, isInitiator) {
     e.track.addEventListener('ended', () => {
       if (combinedStream.getTracks().includes(e.track)) combinedStream.removeTrack(e.track);
     });
-    tile.classList.remove('cam-off');
+    const remoteCameraState = getRemoteState(socketId);
+    tile.classList.toggle('cam-off', !remoteCameraState.cameraOn && !remoteCameraState.sharingScreen);
   };
 
   if (isInitiator) {
@@ -1006,21 +1077,30 @@ function updateParticipantCount() {
 // MIC / CAMERA
 // ============================================================
 function toggleMic() {
+  setMicEnabled(!micOn);
+}
+
+function setMicEnabled(enabled) {
   if (!audioTrack) return;
-  audioTrack.enabled = !audioTrack.enabled;
+  audioTrack.enabled = !!enabled;
   micOn = audioTrack.enabled;
   document.getElementById('micBtn').classList.toggle('off', !micOn);
   applyMutedIcon('tile-local', !micOn);
-  socket.emit('mic-changed', { meetingId, muted: !micOn });
+  socket?.emit('mic-changed', { meetingId, muted: !micOn });
 }
 
 function toggleCam() {
+  setCameraEnabled(!cameraOn);
+}
+
+function setCameraEnabled(enabled) {
   const camTrack = rawStream.getVideoTracks()[0];
   if (!camTrack) return;
-  cameraOn = !cameraOn;
+  cameraOn = !!enabled;
   camTrack.enabled = cameraOn;
   document.getElementById('camBtn').classList.toggle('off', !cameraOn);
   updateLocalTileStream();
+  socket?.emit('camera-changed', { meetingId, enabled: cameraOn });
 }
 
 // ============================================================
@@ -1360,6 +1440,10 @@ document.addEventListener('click', (e) => {
   }
   if (!e.target.closest('#bgBtn') && !e.target.closest('#bgPopover')) {
     document.getElementById('bgPopover').classList.remove('open');
+  }
+  if (!e.target.closest('#optionsBtn') && !e.target.closest('#optionsPopover')) {
+    document.getElementById('optionsPopover').classList.remove('open');
+    document.getElementById('optionsBtn').setAttribute('aria-expanded', 'false');
   }
 });
 

@@ -110,12 +110,16 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(session({
+const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'meeting-platform-secret-change-me',
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 1000 * 60 * 60 * 8 } // 8 hours
-}));
+});
+app.use(sessionMiddleware);
+// Socket.IO must read the same signed-in session as the HTTP API. This prevents
+// a client from claiming another user's ID when joining or moderating a room.
+io.engine.use(sessionMiddleware);
 
 // ---------- Helpers ----------
 function sanitizeUser(u) {
@@ -487,19 +491,44 @@ app.post('/api/messages', requireLogin, upload.single('file'), (req, res) => {
 // ---------- Socket.io: WebRTC signaling + live chat ----------
 // Rooms are keyed by meetingId. Every socket that joins must belong to that
 // meeting (creator, invited employee, or superadmin) — verified server-side.
+function getSocketUser(socket) {
+  const userId = socket.request.session && socket.request.session.userId;
+  return userId ? db.get('users').find({ id: userId }).value() : null;
+}
+
+function isMeetingOwner(socket, meetingId) {
+  if (!meetingId || socket.data.meetingId !== meetingId) return false;
+  const meeting = db.get('meetings').find({ id: meetingId }).value();
+  return Boolean(meeting && meeting.createdBy === socket.data.userId);
+}
+
+function sendModerationError(socket, message) {
+  socket.emit('moderation-error', message);
+}
+
+function getModerationTargets(socket, meetingId, targetSocketId) {
+  const room = io.sockets.adapter.rooms.get(meetingId);
+  if (!room) return [];
+  if (targetSocketId) {
+    if (targetSocketId === socket.id || !room.has(targetSocketId)) return null;
+    return [targetSocketId];
+  }
+  return Array.from(room).filter(socketId => socketId !== socket.id);
+}
+
 io.on('connection', (socket) => {
   // Any logged-in user registers their personal room so direct messages reach them live,
   // regardless of whether they're in a meeting room or just browsing the dashboard.
-  socket.on('register', ({ userId }) => {
-    const user = db.get('users').find({ id: userId }).value();
+  socket.on('register', () => {
+    const user = getSocketUser(socket);
     if (!user) return;
-    socket.data.registeredUserId = userId;
-    socket.join('user:' + userId);
+    socket.data.registeredUserId = user.id;
+    socket.join('user:' + user.id);
   });
 
-  socket.on('join-room', ({ meetingId, userId }) => {
+  socket.on('join-room', ({ meetingId }) => {
     const meeting = db.get('meetings').find({ id: meetingId }).value();
-    const user = db.get('users').find({ id: userId }).value();
+    const user = getSocketUser(socket);
     if (!meeting || !user) return socket.emit('join-error', 'Meeting or user not found');
 
     const allowed = user.role === 'superadmin' ||
@@ -521,22 +550,33 @@ io.on('connection', (socket) => {
         name: s.data.name,
         sharingScreen: !!s.data.sharingScreen,
         handRaised: !!s.data.handRaised,
-        micMuted: !!s.data.micMuted
+        micMuted: !!s.data.micMuted,
+        cameraOn: s.data.cameraOn !== false
       };
     });
     socket.emit('existing-users', existingUsers);
 
     socket.join(meetingId);
-    socket.to(meetingId).emit('user-joined', { socketId: socket.id, userId: user.id, name: user.name });
+    socket.to(meetingId).emit('user-joined', {
+      socketId: socket.id,
+      userId: user.id,
+      name: user.name,
+      sharingScreen: false,
+      handRaised: false,
+      micMuted: false,
+      cameraOn: true
+    });
   });
 
   // WebRTC signaling relay (offer / answer / ICE candidates)
   socket.on('signal', ({ to, data }) => {
+    const target = io.sockets.sockets.get(to);
+    if (!target || !socket.data.meetingId || target.data.meetingId !== socket.data.meetingId) return;
     io.to(to).emit('signal', { from: socket.id, name: socket.data.name, data });
   });
 
   socket.on('chat-message', ({ meetingId, text }) => {
-    if (!meetingId || !text) return;
+    if (!meetingId || socket.data.meetingId !== meetingId || !text) return;
     io.to(meetingId).emit('chat-message', {
       from: socket.data.userId,
       name: socket.data.name || 'Unknown',
@@ -569,6 +609,54 @@ io.on('connection', (socket) => {
     socket.data.micMuted = !!muted;
     io.to(meetingId).emit('mic-changed', {
       socketId: socket.id, userId: socket.data.userId, name: socket.data.name, muted: !!muted
+    });
+  });
+
+  // ---- Camera status (used by attendee tiles and the owner controls) ----
+  socket.on('camera-changed', ({ meetingId, enabled }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    socket.data.cameraOn = !!enabled;
+    io.to(meetingId).emit('camera-changed', {
+      socketId: socket.id, userId: socket.data.userId, name: socket.data.name, enabled: !!enabled
+    });
+  });
+
+  // ---- Meeting owner moderation ----
+  // Each command is authorized against the meeting creator stored in the database.
+  // `targetSocketId` is optional: omitted means every attendee except the owner.
+  socket.on('admin-audio-state', ({ meetingId, targetSocketId, muted }) => {
+    if (!isMeetingOwner(socket, meetingId)) return sendModerationError(socket, 'Only this meeting’s owner can change attendee microphones.');
+    if (typeof muted !== 'boolean') return sendModerationError(socket, 'Invalid microphone setting.');
+    const targets = getModerationTargets(socket, meetingId, targetSocketId);
+    if (!targets) return sendModerationError(socket, 'That attendee is no longer in this meeting.');
+    targets.forEach(socketId => io.to(socketId).emit('admin-audio-state', { muted }));
+  });
+
+  socket.on('admin-camera-state', ({ meetingId, targetSocketId, enabled }) => {
+    if (!isMeetingOwner(socket, meetingId)) return sendModerationError(socket, 'Only this meeting’s owner can change attendee cameras.');
+    if (typeof enabled !== 'boolean') return sendModerationError(socket, 'Invalid camera setting.');
+    const targets = getModerationTargets(socket, meetingId, targetSocketId);
+    if (!targets) return sendModerationError(socket, 'That attendee is no longer in this meeting.');
+    targets.forEach(socketId => io.to(socketId).emit('admin-camera-state', { enabled }));
+  });
+
+  socket.on('admin-stop-screen-share', ({ meetingId, targetSocketId }) => {
+    if (!isMeetingOwner(socket, meetingId)) return sendModerationError(socket, 'Only this meeting’s owner can stop attendee screen sharing.');
+    const targets = getModerationTargets(socket, meetingId, targetSocketId);
+    if (!targets) return sendModerationError(socket, 'That attendee is no longer in this meeting.');
+    targets.forEach(socketId => io.to(socketId).emit('admin-stop-screen-share'));
+  });
+
+  // ---- Live captions ----
+  // Browsers create the transcript locally; final text is relayed only to the
+  // other people in the same meeting who have chosen to display captions.
+  socket.on('caption-text', ({ meetingId, text }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId || typeof text !== 'string') return;
+    const cleanText = text.trim().slice(0, 1000);
+    if (!cleanText) return;
+    socket.to(meetingId).emit('caption-received', {
+      speaker: socket.data.name || 'Unknown',
+      text: cleanText
     });
   });
 
