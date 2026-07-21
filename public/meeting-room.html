@@ -43,12 +43,29 @@
         <div class="sub" id="meetingSub"></div>
       </div>
       <div class="header-right">
+        <!-- FULLSCREEN BUTTON -->
+        <button class="ctrl-btn" id="fullscreenBtn" title="Toggle fullscreen video area">⛶</button>
+        
         <div class="raised-hands-strip" id="raisedHandsStrip"></div>
         <div class="sub" id="participantCount"></div>
       </div>
+      
+      <!-- ADMIN CONTROLS PANEL (shown only if user is meeting owner) -->
+      <div class="admin-controls" id="adminControls" style="display:none;">
+        <div class="admin-header">👑 Admin Panel</div>
+        
+        <div class="admin-buttons">
+          <button class="admin-btn" id="muteAllBtn" title="Mute all participants">🔇 Mute All</button>
+          <button class="admin-btn" id="unmuteAllBtn" title="Unmute all participants">🔊 Unmute All</button>
+          <button class="admin-btn" id="stopAllScreenBtn" title="Stop all screen shares">⛔ Stop All Screens</button>
+          <button class="admin-btn" id="toggleCaptionsBtn" title="Toggle live captions">📝 Captions</button>
+        </div>
+        
+        <div class="participants-list" id="participantsList"></div>
+      </div>
     </div>
 
-    <div class="room-body">
+    <div class="room-body" id="roomBody">
       <div class="video-area" id="videoArea">
         <div class="center-msg" id="centerMsg">Connecting...</div>
       </div>
@@ -60,6 +77,15 @@
           <button onclick="sendChat()">Send</button>
         </div>
       </div>
+    </div>
+
+    <!-- LIVE CAPTIONS DISPLAY -->
+    <div class="captions-display" id="captionsDisplay" style="display:none;">
+      <div class="captions-header">
+        <span>📝 Live Captions</span>
+        <button class="close-btn" id="closeCaptionsBtn">✕</button>
+      </div>
+      <div class="captions-content" id="captionsContent"></div>
     </div>
 
     <div class="controls-bar" id="controlsBar">
@@ -87,7 +113,6 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
-<!-- On-device background segmentation (runs fully client-side, no data leaves the browser) -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"></script>
 <script>
 const params = new URLSearchParams(window.location.search);
@@ -99,14 +124,23 @@ let meeting = null;
 let socket = null;
 
 // Media pipeline state
-let rawStream = null;        // raw camera+mic from getUserMedia
+let rawStream = null;
 let audioTrack = null;
-let outboundVideoTrack = null; // whatever we currently send to peers (camera/bg-processed/screen)
+let outboundVideoTrack = null;
 let cameraOn = true;
 let micOn = true;
 let isScreenSharing = false;
 let screenStream = null;
-let preScreenShareTrack = null; // track to restore after screen share ends
+let preScreenShareTrack = null;
+
+// FULLSCREEN STATE
+let isFullscreenMode = false;
+let fullscreenTileId = null;
+
+// ADMIN STATE
+let isAdmin = false;
+let captionsEnabled = false;
+let recognition = null;
 
 // Virtual background
 const BG_PRESETS = [
@@ -117,22 +151,413 @@ const BG_PRESETS = [
   { id: 'space', label: 'Space', url: 'https://images.unsplash.com/photo-1446776653964-20c1d3a81b06?w=800' }
 ];
 let currentBg = 'none';
-let customBgImage = null; // Image element for uploaded custom background
+let customBgImage = null;
 let segmenter = null;
 let segmentationActive = false;
 let bgCanvas, bgCtx, bgSourceVideo;
 let bgAnimHandle = null;
 
-const peers = {}; // socketId -> { pc, name, sharingScreen, handRaised }
-// Remote state that must survive even before the peer's video tile exists yet
-// (WebRTC negotiation/ontrack can take a moment, but reactions/hand-raise/screen-share
-// events can arrive from the server before that tile is in the DOM).
-const remoteState = {}; // socketId -> { name, handRaised, sharingScreen }
+const peers = {};
+const remoteState = {};
 function getRemoteState(socketId) {
   if (!remoteState[socketId]) remoteState[socketId] = { name: null, handRaised: false, sharingScreen: false, micMuted: false };
   return remoteState[socketId];
 }
 const STUN_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// ============================================================
+// SOUND NOTIFICATION FUNCTIONS
+// ============================================================
+function playNotificationSound(type) {
+  try {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    switch(type) {
+      case 'hand-raise':
+        playHandRaiseSound(audioContext);
+        break;
+      case 'screen-share':
+        playScreenShareSound(audioContext);
+        break;
+      case 'user-join':
+        playUserJoinSound(audioContext);
+        break;
+      case 'user-left':
+        playUserLeftSound(audioContext);
+        break;
+    }
+  } catch (err) {
+    console.log('Audio notification error:', err);
+  }
+}
+
+function playHandRaiseSound(audioContext) {
+  const now = audioContext.currentTime;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  
+  osc.frequency.setValueAtTime(784, now);
+  osc.frequency.exponentialRampToValueAtTime(1046, now + 0.15);
+  
+  gain.gain.setValueAtTime(0.3, now);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+  
+  osc.start(now);
+  osc.stop(now + 0.2);
+}
+
+function playScreenShareSound(audioContext) {
+  const now = audioContext.currentTime;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  
+  osc.frequency.setValueAtTime(880, now);
+  osc.frequency.setValueAtTime(880, now + 0.1);
+  osc.frequency.setValueAtTime(1108, now + 0.2);
+  
+  gain.gain.setValueAtTime(0.25, now);
+  gain.gain.setValueAtTime(0.25, now + 0.1);
+  gain.gain.setValueAtTime(0, now + 0.15);
+  gain.gain.setValueAtTime(0.25, now + 0.2);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+  
+  osc.start(now);
+  osc.stop(now + 0.35);
+}
+
+function playUserJoinSound(audioContext) {
+  const now = audioContext.currentTime;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  
+  osc.frequency.setValueAtTime(523, now);
+  osc.frequency.setValueAtTime(523, now + 0.08);
+  osc.frequency.setValueAtTime(659, now + 0.16);
+  osc.frequency.setValueAtTime(659, now + 0.24);
+  osc.frequency.setValueAtTime(784, now + 0.32);
+  
+  gain.gain.setValueAtTime(0.2, now);
+  gain.gain.setValueAtTime(0.2, now + 0.08);
+  gain.gain.setValueAtTime(0, now + 0.12);
+  gain.gain.setValueAtTime(0.2, now + 0.16);
+  gain.gain.setValueAtTime(0, now + 0.24);
+  gain.gain.setValueAtTime(0.2, now + 0.32);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.42);
+  
+  osc.start(now);
+  osc.stop(now + 0.42);
+}
+
+function playUserLeftSound(audioContext) {
+  const now = audioContext.currentTime;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  
+  osc.frequency.setValueAtTime(784, now);
+  osc.frequency.setValueAtTime(784, now + 0.08);
+  osc.frequency.setValueAtTime(659, now + 0.16);
+  osc.frequency.setValueAtTime(659, now + 0.24);
+  osc.frequency.setValueAtTime(523, now + 0.32);
+  
+  gain.gain.setValueAtTime(0.15, now);
+  gain.gain.setValueAtTime(0.15, now + 0.08);
+  gain.gain.setValueAtTime(0, now + 0.12);
+  gain.gain.setValueAtTime(0.15, now + 0.16);
+  gain.gain.setValueAtTime(0, now + 0.24);
+  gain.gain.setValueAtTime(0.15, now + 0.32);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.42);
+  
+  osc.start(now);
+  osc.stop(now + 0.42);
+}
+
+// ============================================================
+// FULLSCREEN TOGGLE FUNCTION
+// ============================================================
+function toggleFullscreenMode() {
+  const roomWrap = document.getElementById('roomWrap');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  
+  if (!roomWrap || !fullscreenBtn) return;
+  
+  isFullscreenMode = !isFullscreenMode;
+  fullscreenTileId = null;
+  
+  roomWrap.classList.toggle('fullscreen-mode', isFullscreenMode);
+  fullscreenBtn.classList.toggle('active', isFullscreenMode);
+  
+  fullscreenBtn.textContent = isFullscreenMode ? '⛶' : '⛶';
+  fullscreenBtn.title = isFullscreenMode ? 'Exit fullscreen' : 'Toggle fullscreen video area';
+  
+  updateFullscreenExitButton();
+}
+
+function exitFullscreen() {
+  if (isFullscreenMode || fullscreenTileId) {
+    isFullscreenMode = false;
+    fullscreenTileId = null;
+    
+    const roomWrap = document.getElementById('roomWrap');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    
+    roomWrap.classList.remove('fullscreen-mode');
+    fullscreenBtn.classList.remove('active');
+    
+    document.querySelectorAll('.video-tile.tile-fullscreen').forEach(tile => {
+      tile.classList.remove('tile-fullscreen');
+    });
+    
+    updateFullscreenExitButton();
+  }
+}
+
+function updateFullscreenExitButton() {
+  let exitBtn = document.getElementById('fullscreenExitBtn');
+  
+  if (!exitBtn) {
+    exitBtn = document.createElement('button');
+    exitBtn.id = 'fullscreenExitBtn';
+    exitBtn.className = 'fullscreen-exit-btn';
+    exitBtn.textContent = '✕ Exit Fullscreen';
+    exitBtn.style.display = 'none';
+    document.body.appendChild(exitBtn);
+    exitBtn.addEventListener('click', exitFullscreen);
+  }
+  
+  if (isFullscreenMode || fullscreenTileId) {
+    exitBtn.style.display = 'block';
+  } else {
+    exitBtn.style.display = 'none';
+  }
+}
+
+function toggleTileFullscreen(tileId) {
+  if (fullscreenTileId === tileId) {
+    fullscreenTileId = null;
+    document.getElementById(tileId).classList.remove('tile-fullscreen');
+  } else {
+    if (fullscreenTileId) {
+      document.getElementById(fullscreenTileId).classList.remove('tile-fullscreen');
+    }
+    
+    fullscreenTileId = tileId;
+    document.getElementById(tileId).classList.add('tile-fullscreen');
+  }
+  
+  updateFullscreenExitButton();
+}
+
+// ============================================================
+// ADMIN CONTROLS FUNCTIONALITY
+// ============================================================
+
+function checkIfAdmin() {
+  if (meeting && meeting.createdById === currentUser.id) {
+    isAdmin = true;
+    document.getElementById('adminControls').style.display = 'block';
+    initAdminControls();
+  }
+}
+
+function initAdminControls() {
+  document.getElementById('muteAllBtn').addEventListener('click', muteAllParticipants);
+  document.getElementById('unmuteAllBtn').addEventListener('click', unmuteAllParticipants);
+  document.getElementById('stopAllScreenBtn').addEventListener('click', stopAllScreenShares);
+  document.getElementById('toggleCaptionsBtn').addEventListener('click', toggleLiveCaptions);
+  document.getElementById('closeCaptionsBtn').addEventListener('click', () => {
+    captionsEnabled = false;
+    document.getElementById('captionsDisplay').style.display = 'none';
+    stopSpeechRecognition();
+  });
+}
+
+function muteAllParticipants() {
+  if (!isAdmin) return;
+  socket.emit('admin-mute-all', { meetingId });
+  addSystemChatLine('🔇 Admin muted all participants');
+}
+
+function unmuteAllParticipants() {
+  if (!isAdmin) return;
+  socket.emit('admin-unmute-all', { meetingId });
+  addSystemChatLine('🔊 Admin unmuted all participants');
+}
+
+function muteParticipant(socketId) {
+  if (!isAdmin) return;
+  socket.emit('admin-mute-user', { meetingId, targetSocketId: socketId });
+}
+
+function unmuteParticipant(socketId) {
+  if (!isAdmin) return;
+  socket.emit('admin-unmute-user', { meetingId, targetSocketId: socketId });
+}
+
+function disableCameraForUser(socketId) {
+  if (!isAdmin) return;
+  socket.emit('admin-disable-camera', { meetingId, targetSocketId: socketId });
+}
+
+function stopScreenShareForUser(socketId) {
+  if (!isAdmin) return;
+  socket.emit('admin-stop-screen-share', { meetingId, targetSocketId: socketId });
+}
+
+function stopAllScreenShares() {
+  if (!isAdmin) return;
+  socket.emit('admin-stop-all-screens', { meetingId });
+  addSystemChatLine('⛔ Admin stopped all screen shares');
+}
+
+function toggleLiveCaptions() {
+  captionsEnabled = !captionsEnabled;
+  
+  if (captionsEnabled) {
+    document.getElementById('captionsDisplay').style.display = 'block';
+    document.getElementById('toggleCaptionsBtn').classList.add('active');
+    startSpeechRecognition();
+    addSystemChatLine('📝 Live captions enabled');
+  } else {
+    document.getElementById('captionsDisplay').style.display = 'none';
+    document.getElementById('toggleCaptionsBtn').classList.remove('active');
+    stopSpeechRecognition();
+    addSystemChatLine('📝 Live captions disabled');
+  }
+}
+
+function startSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert('Speech Recognition not supported in this browser');
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.language = 'en-US';
+
+  recognition.onstart = () => {
+    console.log('Speech recognition started');
+  };
+
+  recognition.onresult = (event) => {
+    let interimTranscript = '';
+    let finalTranscript = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+
+      if (event.results[i].isFinal) {
+        finalTranscript += transcript + ' ';
+      } else {
+        interimTranscript += transcript;
+      }
+    }
+
+    if (finalTranscript) {
+      displayCaption(currentUser.name + ': ' + finalTranscript, false);
+      socket.emit('caption-text', { meetingId, speaker: currentUser.name, text: finalTranscript });
+    }
+
+    if (interimTranscript) {
+      displayCaption(currentUser.name + ': ' + interimTranscript, true);
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.log('Speech recognition error:', event.error);
+  };
+
+  recognition.onend = () => {
+    if (captionsEnabled) {
+      recognition.start();
+    }
+  };
+
+  recognition.start();
+}
+
+function stopSpeechRecognition() {
+  if (recognition) {
+    recognition.stop();
+  }
+}
+
+function displayCaption(text, isInterim) {
+  const captionsContent = document.getElementById('captionsContent');
+  
+  if (isInterim) {
+    let interimEl = document.getElementById('interim-caption');
+    if (!interimEl) {
+      interimEl = document.createElement('div');
+      interimEl.id = 'interim-caption';
+      interimEl.className = 'caption-line interim';
+      captionsContent.appendChild(interimEl);
+    }
+    interimEl.textContent = text;
+  } else {
+    const captionEl = document.createElement('div');
+    captionEl.className = 'caption-line final';
+    captionEl.textContent = text;
+    captionsContent.appendChild(captionEl);
+    
+    const interimEl = document.getElementById('interim-caption');
+    if (interimEl) interimEl.remove();
+    
+    captionsContent.scrollTop = captionsContent.scrollHeight;
+    
+    const lines = captionsContent.querySelectorAll('.caption-line.final');
+    if (lines.length > 10) {
+      lines[0].remove();
+    }
+  }
+}
+
+function updateParticipantsList() {
+  if (!isAdmin) return;
+  
+  const list = document.getElementById('participantsList');
+  list.innerHTML = '';
+
+  const localItem = document.createElement('div');
+  localItem.className = 'participant-item';
+  localItem.innerHTML = `
+    <span class="participant-name">👤 ${currentUser.name} (You - Owner)</span>
+  `;
+  list.appendChild(localItem);
+
+  Object.entries(peers).forEach(([socketId, peer]) => {
+    const item = document.createElement('div');
+    item.className = 'participant-item';
+    const micStatus = remoteState[socketId]?.micMuted ? '🔇' : '🎤';
+    
+    item.innerHTML = `
+      <div class="participant-info">
+        <span class="participant-name">${peer.name} ${micStatus}</span>
+        <div class="participant-controls">
+          <button class="control-btn" onclick="muteParticipant('${socketId}')" title="Mute">🔇</button>
+          <button class="control-btn" onclick="unmuteParticipant('${socketId}')" title="Unmute">🔊</button>
+          <button class="control-btn" onclick="disableCameraForUser('${socketId}')" title="Disable Camera">📹</button>
+          ${remoteState[socketId]?.sharingScreen ? `<button class="control-btn" onclick="stopScreenShareForUser('${socketId}')" title="Stop Screen Share">⛔</button>` : ''}
+        </div>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+}
 
 // ============================================================
 // INIT + LOBBY
@@ -208,6 +633,7 @@ function joinMeeting() {
 
   renderLocalTile();
   connectSocket();
+  checkIfAdmin();
 
   document.getElementById('micBtn').addEventListener('click', toggleMic);
   document.getElementById('camBtn').addEventListener('click', toggleCam);
@@ -219,6 +645,14 @@ function joinMeeting() {
   document.getElementById('leaveBtn').addEventListener('click', leaveMeeting);
   document.getElementById('chatInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChat();
+  });
+
+  document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenMode);
+  
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && (isFullscreenMode || fullscreenTileId)) {
+      exitFullscreen();
+    }
   });
 
   document.getElementById('micBtn').classList.toggle('off', !micOn);
@@ -235,16 +669,6 @@ function togglePopover(id) {
 // ============================================================
 // LOCAL TILE
 // ============================================================
-// IMPORTANT: this must be the SAME MediaStream instance every time it's read while
-// sending to peers. Calling `new MediaStream(tracks)` fresh on every pc.addTrack()
-// call (as this used to do) gives the video track and the audio track two different
-// stream ids (msid). The browser then advertises them as two unrelated remote
-// streams, so the receiver's pc.ontrack fires twice with two different
-// `e.streams[0]` values and the *last* one to arrive overwrites the <video>
-// element's srcObject — if the audio track's event lands last, the video element
-// ends up showing an audio-only stream, i.e. a black screen. Keeping one shared
-// MediaStream object (and mutating its tracks in place) keeps both tracks bundled
-// under a single msid so the receiver gets both in the same 'streams[0]'.
 const localOutboundStream = new MediaStream();
 function syncLocalOutboundStream() {
   localOutboundStream.getTracks().forEach(t => {
@@ -288,6 +712,8 @@ function renderLocalTile() {
   tile.appendChild(label);
   tile.appendChild(reactionLayer);
   videoArea.appendChild(tile);
+  
+  tile.addEventListener('click', () => toggleTileFullscreen('tile-local'));
 }
 
 function updateLocalTileStream() {
@@ -306,8 +732,6 @@ function connectSocket() {
 
   socket.on('connect', () => {
     socket.emit('join-room', { meetingId, userId: currentUser.id });
-    // Let everyone already in the room know our starting mic state (e.g. if the
-    // mic was toggled off in the pre-join lobby before connecting).
     socket.emit('mic-changed', { meetingId, muted: !micOn });
     applyMutedIcon('tile-local', !micOn);
   });
@@ -329,11 +753,14 @@ function connectSocket() {
     });
     updateParticipantCount();
     refreshHandBadges();
+    updateParticipantsList();
   });
 
   socket.on('user-joined', (u) => {
     addSystemChatLine(`${u.name} joined the meeting`);
+    playNotificationSound('user-join');
     updateParticipantCount();
+    updateParticipantsList();
   });
 
   socket.on('signal', async ({ from, name, data }) => {
@@ -348,12 +775,13 @@ function connectSocket() {
     } else if (data.type === 'answer') {
       await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
     } else if (data.candidate) {
-      try { await entry.pc.addIceCandidate(data); } catch (e) { /* ignore */ }
+      try { await entry.pc.addIceCandidate(data); } catch (e) { }
     }
   });
 
   socket.on('user-left', (u) => {
     addSystemChatLine(`${u.name} left the meeting`);
+    playNotificationSound('user-left');
     const tile = document.getElementById('tile-' + u.socketId);
     if (tile) tile.remove();
     if (peers[u.socketId]) {
@@ -363,6 +791,7 @@ function connectSocket() {
     delete remoteState[u.socketId];
     updateParticipantCount();
     refreshHandBadges();
+    updateParticipantsList();
   });
 
   socket.on('chat-message', (msg) => {
@@ -387,10 +816,10 @@ function connectSocket() {
         badge.remove();
       }
     }
-    // If the tile isn't in the DOM yet, updateSpotlight()/the badge will be
-    // (re)applied automatically once pc.ontrack creates it (see createPeerConnection).
     updateSpotlight();
     addSystemChatLine(`${name} ${sharing ? 'started' : 'stopped'} sharing their screen`);
+    if (sharing) playNotificationSound('screen-share');
+    updateParticipantsList();
   });
 
   socket.on('hand-raised', ({ socketId, name, raised }) => {
@@ -398,16 +827,12 @@ function connectSocket() {
     state.handRaised = !!raised;
     if (name) state.name = name;
     if (peers[socketId]) peers[socketId].handRaised = !!raised;
-    // Always refresh, even if the peer's tile/connection hasn't been created yet —
-    // refreshHandBadges() falls back to remoteState so the badge appears as soon
-    // as the tile exists.
     refreshHandBadges();
     addSystemChatLine(`${name} ${raised ? 'raised' : 'lowered'} their hand ✋`);
+    if (raised) playNotificationSound('hand-raise');
   });
 
   socket.on('reaction', ({ socketId, emoji }) => {
-    // The sender already renders their own reaction optimistically in sendReaction(),
-    // so skip re-rendering it when our own broadcast echoes back to us.
     if (socketId === socket.id) return;
     showFloatingEmoji(socketId, emoji);
   });
@@ -416,12 +841,56 @@ function connectSocket() {
     const state = getRemoteState(socketId);
     state.micMuted = !!muted;
     applyMutedIcon('tile-' + socketId, state.micMuted);
+    updateParticipantsList();
+  });
+
+  // ADMIN COMMAND HANDLERS
+  socket.on('admin-mute-me', () => {
+    if (audioTrack) {
+      audioTrack.enabled = false;
+      micOn = false;
+      document.getElementById('micBtn').classList.add('off');
+      applyMutedIcon('tile-local', true);
+      addSystemChatLine('🔇 Admin muted you');
+    }
+  });
+
+  socket.on('admin-unmute-me', () => {
+    if (audioTrack) {
+      audioTrack.enabled = true;
+      micOn = true;
+      document.getElementById('micBtn').classList.remove('off');
+      applyMutedIcon('tile-local', false);
+      addSystemChatLine('🔊 Admin unmuted you');
+    }
+  });
+
+  socket.on('admin-disable-camera-me', () => {
+    const camTrack = rawStream.getVideoTracks()[0];
+    if (camTrack) {
+      cameraOn = false;
+      camTrack.enabled = false;
+      document.getElementById('camBtn').classList.add('off');
+      updateLocalTileStream();
+      addSystemChatLine('📹 Admin disabled your camera');
+    }
+  });
+
+  socket.on('admin-stop-screen-share-me', () => {
+    if (isScreenSharing) {
+      stopScreenShare();
+      addSystemChatLine('⛔ Admin stopped your screen share');
+    }
+  });
+
+  socket.on('caption-received', ({ speaker, text }) => {
+    displayCaption(speaker + ': ' + text, false);
   });
 }
 
 function applyMutedIcon(tileId, muted) {
   const tile = document.getElementById(tileId);
-  if (!tile) return; // will be re-applied once the tile is created, see pc.ontrack
+  if (!tile) return;
   let icon = tile.querySelector('.muted-icon');
   if (muted && !icon) {
     icon = document.createElement('div');
@@ -471,10 +940,9 @@ function createPeerConnection(socketId, name, isInitiator) {
       tile.appendChild(label);
       tile.appendChild(reactionLayer);
       videoArea.appendChild(tile);
+      
+      tile.addEventListener('click', () => toggleTileFullscreen('tile-' + socketId));
 
-      // The tile just came into existence — re-apply any state (hand raised,
-      // screen sharing) that may have arrived from the server before this
-      // tile was ready to render it.
       const state = getRemoteState(socketId);
       if (peers[socketId]) {
         peers[socketId].sharingScreen = state.sharingScreen;
@@ -494,12 +962,6 @@ function createPeerConnection(socketId, name, isInitiator) {
       updateSpotlight();
     }
     const videoEl = tile.querySelector('video');
-    // Defensive: accumulate incoming tracks into ONE persistent MediaStream for this
-    // peer instead of assigning e.streams[0] directly. If video/audio ever arrive as
-    // separate remote streams (e.g. due to a stale offer/answer from a mismatched
-    // client), blindly overwriting srcObject with whichever event fires last can
-    // replace a working video stream with an audio-only one — which looks like a
-    // black screen even though the connection is fine.
     let combinedStream = peers[socketId].remoteStream;
     if (!combinedStream) {
       combinedStream = new MediaStream();
@@ -569,11 +1031,11 @@ async function toggleScreenShare() {
     try {
       screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     } catch (err) {
-      return; // user cancelled the picker
+      return;
     }
     preScreenShareTrack = outboundVideoTrack;
     const screenTrack = screenStream.getVideoTracks()[0];
-    screenTrack.classList = screenTrack.classList || null; // no-op, keep track plain
+    screenTrack.classList = screenTrack.classList || null;
     outboundVideoTrack = screenTrack;
     isScreenSharing = true;
 
@@ -633,8 +1095,6 @@ function refreshHandBadges() {
     addHandIcon('tile-local');
     raisedNames.push('You');
   }
-  // Merge peers + remoteState so a hand-raise that arrived before the tile/pc
-  // existed is still shown once we know about the participant.
   const ids = new Set([...Object.keys(peers), ...Object.keys(remoteState)]);
   ids.forEach(id => {
     const raised = (peers[id] && peers[id].handRaised) || (remoteState[id] && remoteState[id].handRaised);
@@ -672,7 +1132,7 @@ function sendReaction(emoji) {
 }
 function showFloatingEmoji(tileKey, emoji) {
   const layer = document.getElementById('reaction-' + tileKey);
-  if (!layer) return; // tile not created yet (rare race right after joining) — reaction is ephemeral, safe to skip
+  if (!layer) return;
   const span = document.createElement('span');
   span.className = 'floating-emoji';
   span.textContent = emoji;
@@ -682,7 +1142,7 @@ function showFloatingEmoji(tileKey, emoji) {
 }
 
 // ============================================================
-// VIRTUAL BACKGROUND (blur / preset image / custom upload)
+// VIRTUAL BACKGROUND
 // ============================================================
 function renderBackgroundPicker(container, previewVideoOverride) {
   if (!container) return;
@@ -706,7 +1166,7 @@ function renderBackgroundPicker(container, previewVideoOverride) {
   container.querySelectorAll('.bg-option[data-bg]').forEach(opt => {
     opt.addEventListener('click', () => {
       const bgId = opt.dataset.bg;
-      if (bgId === 'custom' && !customBgImage) return; // must upload first
+      if (bgId === 'custom' && !customBgImage) return;
       applyBackground(bgId, previewVideoOverride);
     });
   });
@@ -717,7 +1177,6 @@ function renderBackgroundPicker(container, previewVideoOverride) {
     img.onload = () => {
       customBgImage = img;
       applyBackground('custom', previewVideoOverride);
-      // sync the thumbnail + selection state in both popovers
       document.querySelectorAll('[id^="customBgThumb-"]').forEach(el => {
         el.style.backgroundImage = `url('${img.src}')`;
         el.textContent = '';
@@ -738,7 +1197,7 @@ async function applyBackground(bgId, previewVideoOverride) {
 
   if (bgId === 'none') {
     stopSegmentation();
-    if (isScreenSharing) return; // don't touch outbound track while presenting
+    if (isScreenSharing) return;
     outboundVideoTrack = camTrack;
     replaceOutboundTrackOnAllPeers(outboundVideoTrack);
     const el = previewVideoOverride || document.querySelector('#tile-local video');
@@ -794,12 +1253,10 @@ async function startSegmentation(camTrack, mode, bgImageEl, previewVideoOverride
     bgCtx.save();
     bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
 
-    // draw the segmentation mask, then keep only the person pixels
     bgCtx.drawImage(results.segmentationMask, 0, 0, bgCanvas.width, bgCanvas.height);
     bgCtx.globalCompositeOperation = 'source-in';
     bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
 
-    // draw the chosen background behind the person
     bgCtx.globalCompositeOperation = 'destination-over';
     if (mode === 'blur') {
       bgCtx.filter = 'blur(14px)';
