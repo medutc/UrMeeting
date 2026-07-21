@@ -45,6 +45,14 @@
       "password": "$2a$10$pTq/8zI2KYJj2SapWnUFmuMM3Q/GjIi.J9mccUSEUEcaeud0m2l2C",
       "role": "employee",
       "departmentId": "operations"
+    },
+    {
+      "id": "617cfce6-3ba9-4920-9431-cc482787ef0d",
+      "name": "med miga",
+      "email": "medmigamo@gmail.com",
+      "password": "$2a$10$uCPIrSUy5z/kp120.DviZezzmJnz2t1nfFjGWZrXCB7TfdG7hx8ZC",
+      "role": "employee",
+      "departmentId": "operations"
     }
   ],
   "meetings": [
@@ -60,17 +68,17 @@
       "createdAt": "2026-07-17T10:23:36.501Z"
     },
     {
-      "id": "063df987-514f-44bc-9693-62bfc916703d",
-      "title": "meet1",
-      "description": "description",
-      "date": "2026-07-20",
-      "time": "15:43",
+      "id": "e34fdd6b-2178-423d-9bdc-900bfa044892",
+      "title": "meeting 5",
+      "description": "this is a meeting",
+      "date": "2026-07-24",
+      "time": "17:45",
       "departmentId": "operations",
       "createdBy": "c14883ff-5b51-4c0f-858e-4b7abe938a71",
       "participantIds": [
-        "1ef675a7-5142-42a6-8547-36c83b12c4b0"
+        "617cfce6-3ba9-4920-9431-cc482787ef0d"
       ],
-      "createdAt": "2026-07-20T14:42:23.234Z"
+      "createdAt": "2026-07-21T16:39:38.283Z"
     }
   ],
   "messages": [

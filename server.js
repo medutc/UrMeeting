@@ -1,4 +1,7 @@
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -9,6 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const nodemailer = require('nodemailer');
 const db = require('./db');
 
 const app = express();
@@ -28,6 +32,81 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
+
+// ---------- Email setup (uses environment variables for security) ----------
+// For Gmail: set GMAIL_USER and GMAIL_PASSWORD (use "App Password" not your actual password)
+// For other SMTP: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+const emailConfig = {
+  gmail: {
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_PASSWORD
+    }
+  },
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT || 587,
+    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  }
+};
+
+const emailTransporter = (() => {
+  if (process.env.GMAIL_USER && process.env.GMAIL_PASSWORD) {
+    return nodemailer.createTransport(emailConfig.gmail);
+  } else if (process.env.SMTP_HOST) {
+    return nodemailer.createTransport(emailConfig.smtp);
+  }
+  return null; // Email disabled if no config provided
+})();
+
+async function sendMeetingInviteEmail(participantEmail, participantName, meeting, creatorName) {
+  if (!emailTransporter) {
+    console.log('[EMAIL DISABLED] Configure GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
+    return false;
+  }
+
+  const emailContent = `
+    <h2>You're invited to a meeting!</h2>
+    <p>Hi ${participantName},</p>
+    <p><strong>${creatorName}</strong> has invited you to a meeting:</p>
+    
+    <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;">
+      <h3 style="margin-top: 0;">${meeting.title}</h3>
+      <p><strong>Description:</strong> ${meeting.description || '(No description provided)'}</p>
+      <p><strong>Date:</strong> ${meeting.date}</p>
+      <p><strong>Time:</strong> ${meeting.time}</p>
+      <p><strong>Organizer:</strong> ${creatorName}</p>
+    </div>
+    
+    <p><a href="${process.env.APP_URL || 'http://localhost:3000'}/meeting-room.html?id=${meeting.id}" 
+         style="display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">
+      Join Meeting
+    </a></p>
+    
+    <p style="color: #666; font-size: 12px; margin-top: 32px;">
+      This is an automated message from UrMeeting. Please do not reply to this email.
+    </p>
+  `;
+
+  try {
+    await emailTransporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.GMAIL_USER || process.env.SMTP_USER,
+      to: participantEmail,
+      subject: `Meeting Invitation: ${meeting.title}`,
+      html: emailContent
+    });
+    console.log(`[EMAIL SENT] to ${participantEmail}`);
+    return true;
+  } catch (err) {
+    console.error(`[EMAIL ERROR] Failed to send to ${participantEmail}:`, err.message);
+    return false;
+  }
+}
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -185,6 +264,25 @@ app.post('/api/meetings', requireLogin, requireRole('dept_admin'), (req, res) =>
     createdAt: new Date().toISOString()
   };
   db.get('meetings').push(meeting).write();
+
+  // Send invitation emails to all invited participants asynchronously
+  // (don't block the response on email delivery)
+  if (chosen.length > 0) {
+    (async () => {
+      for (const participantId of chosen) {
+        const participant = db.get('users').find({ id: participantId }).value();
+        if (participant) {
+          await sendMeetingInviteEmail(
+            participant.email,
+            participant.name,
+            meeting,
+            req.currentUser.name
+          );
+        }
+      }
+    })().catch(err => console.error('[EMAIL BATCH ERROR]', err));
+  }
+
   res.status(201).json({ meeting });
 });
 
