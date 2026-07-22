@@ -16,12 +16,14 @@ const nodemailer = require('nodemailer');
 const db = require('./db');
 
 const app = express();
+app.set('trust proxy', 1); // we run behind Railway/Render's HTTPS-terminating reverse proxy
 const httpServer = http.createServer(app);
 const io = new Server(httpServer);
 const PORT = process.env.PORT || 3000;
 
 // ---------- File upload setup (for direct messages: images, videos, any file) ----------
-const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads');
+// In production, point UPLOAD_DIR at a persistent volume so uploads survive redeployments.
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'public', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -110,11 +112,17 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve uploaded files from UPLOAD_DIR (may live on a persistent volume in production)
+app.use('/uploads', express.static(UPLOAD_DIR));
 const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET || 'meeting-platform-secret-change-me',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 1000 * 60 * 60 * 8 } // 8 hours
+    cookie: {
+    maxAge: 1000 * 60 * 60 * 8, // 8 hours
+    secure: process.env.NODE_ENV === 'production', // HTTPS-only in prod (trust proxy reads X-Forwarded-Proto)
+    sameSite: 'lax'
+  }
 });
 app.use(sessionMiddleware);
 // Socket.IO must read the same signed-in session as the HTTP API. This prevents
@@ -688,6 +696,6 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Meeting platform running at http://localhost:${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`Meeting platform running on port ${PORT}`);
 });
