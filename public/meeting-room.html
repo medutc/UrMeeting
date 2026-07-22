@@ -91,16 +91,7 @@
       <button class="ctrl-btn" id="bgBtn" title="Change background">🖼️</button>
       <div class="popover bg-popover" id="bgPopover"></div>
 
-      <button class="ctrl-btn" id="optionsBtn" title="More meeting options" aria-label="More meeting options" aria-expanded="false">•••</button>
-      <div class="popover options-popover" id="optionsPopover">
-        <button class="option-btn" id="toggleCaptionsBtn" type="button" aria-pressed="false">
-          <span aria-hidden="true">📝</span>
-          <span>
-            <strong>Live captions</strong>
-            <small id="captionsOptionStatus">Off</small>
-          </span>
-        </button>
-      </div>
+      <button class="ctrl-btn captions-toggle" id="toggleCaptionsBtn" type="button" title="Turn live captions on" aria-label="Turn live captions on" aria-pressed="false">CC</button>
 
       <button class="ctrl-btn admin-settings-btn" id="adminSettingsBtn" title="Open meeting controls" aria-label="Open meeting controls" aria-expanded="false" style="display:none;">⚙</button>
 
@@ -125,9 +116,7 @@
         <h3 id="everyoneControlsTitle">Everyone</h3>
         <div class="admin-buttons">
           <button class="admin-btn" id="muteAllBtn" type="button">Mute all</button>
-          <button class="admin-btn" id="unmuteAllBtn" type="button">Unmute all</button>
           <button class="admin-btn" id="cameraOffAllBtn" type="button">Turn cameras off</button>
-          <button class="admin-btn" id="cameraOnAllBtn" type="button">Turn cameras on</button>
           <button class="admin-btn danger" id="stopAllScreenBtn" type="button">Stop all sharing</button>
         </div>
       </section>
@@ -421,9 +410,7 @@ function initAdminControls() {
     if (event.target === event.currentTarget) closeAdminPanel();
   });
   document.getElementById('muteAllBtn').addEventListener('click', () => moderateEveryone('admin-audio-state', { muted: true }, 'Muted all attendees'));
-  document.getElementById('unmuteAllBtn').addEventListener('click', () => moderateEveryone('admin-audio-state', { muted: false }, 'Unmuted all attendees'));
   document.getElementById('cameraOffAllBtn').addEventListener('click', () => moderateEveryone('admin-camera-state', { enabled: false }, 'Turned off all attendee cameras'));
-  document.getElementById('cameraOnAllBtn').addEventListener('click', () => moderateEveryone('admin-camera-state', { enabled: true }, 'Turned on all attendee cameras'));
   document.getElementById('stopAllScreenBtn').addEventListener('click', () => moderateEveryone('admin-stop-screen-share', {}, 'Stopped all attendee screen shares'));
 }
 
@@ -477,12 +464,13 @@ function setCaptionsEnabled(enabled, announce = true) {
   captionsDisplay.style.display = enabled ? 'flex' : 'none';
   captionsButton.classList.toggle('active', enabled);
   captionsButton.setAttribute('aria-pressed', String(enabled));
-  document.getElementById('captionsOptionStatus').textContent = enabled ? 'On' : 'Off';
+  captionsButton.title = enabled ? 'Turn live captions off' : 'Turn live captions on';
+  captionsButton.setAttribute('aria-label', captionsButton.title);
 
   if (enabled) startSpeechRecognition();
   else stopSpeechRecognition();
 
-  if (announce) addSystemChatLine(`Live captions ${enabled ? 'enabled' : 'disabled'}`);
+  if (announce) addSystemChatLine(`Live captions ${enabled ? 'disabled' : 'enabled'}`);
 }
 
 function toggleLiveCaptions() {
@@ -606,14 +594,26 @@ function updateParticipantsList() {
 
     const controls = document.createElement('div');
     controls.className = 'participant-controls';
-    controls.append(
-      makeParticipantControl('Mute', `Mute ${state.name}`, () => moderateParticipant(socketId, 'admin-audio-state', { muted: true }, `Muted ${state.name}`)),
-      makeParticipantControl('Unmute', `Unmute ${state.name}`, () => moderateParticipant(socketId, 'admin-audio-state', { muted: false }, `Unmuted ${state.name}`)),
-      makeParticipantControl(state.cameraOn ? 'Camera off' : 'Camera on', `${state.cameraOn ? 'Turn off' : 'Turn on'} ${state.name}'s camera`, () => moderateParticipant(socketId, 'admin-camera-state', { enabled: !state.cameraOn }, `${state.cameraOn ? 'Turned off' : 'Turned on'} ${state.name}'s camera`))
-    );
+
+    // Audio controls
+    if (!state.micMuted) {
+      controls.append(makeParticipantControl('Mute', `Mute ${state.name}`, () => moderateParticipant(socketId, 'admin-audio-state', { muted: true }, `Muted ${state.name}`)));
+    } else {
+      controls.append(makeParticipantControl('Ask to Unmute', `Ask ${state.name} to unmute`, () => moderateParticipant(socketId, 'admin-request-audio', {}, `Asked ${state.name} to unmute`)));
+    }
+
+    // Video controls
+    if (state.cameraOn) {
+      controls.append(makeParticipantControl('Camera off', `Turn off ${state.name}'s camera`, () => moderateParticipant(socketId, 'admin-camera-state', { enabled: false }, `Turned off ${state.name}'s camera`)));
+    } else {
+      controls.append(makeParticipantControl('Ask to Start Video', `Ask ${state.name} to start video`, () => moderateParticipant(socketId, 'admin-request-camera', {}, `Asked ${state.name} to start video`)));
+    }
+
+    // Screen share controls
     if (state.sharingScreen) {
       controls.append(makeParticipantControl('Stop share', `Stop ${state.name}'s screen share`, () => moderateParticipant(socketId, 'admin-stop-screen-share', {}, `Stopped ${state.name}'s screen share`), true));
     }
+    
     item.append(info, controls);
     list.appendChild(item);
   });
@@ -701,7 +701,6 @@ function joinMeeting() {
   document.getElementById('handBtn').addEventListener('click', toggleHand);
   document.getElementById('reactionBtn').addEventListener('click', () => togglePopover('reactionsPopover'));
   document.getElementById('bgBtn').addEventListener('click', () => togglePopover('bgPopover'));
-  document.getElementById('optionsBtn').addEventListener('click', () => togglePopover('optionsPopover'));
   document.getElementById('toggleCaptionsBtn').addEventListener('click', toggleLiveCaptions);
   document.getElementById('closeCaptionsBtn').addEventListener('click', () => setCaptionsEnabled(false));
   document.getElementById('chatBtn').addEventListener('click', toggleChatPanel);
@@ -727,14 +726,11 @@ function joinMeeting() {
 }
 
 function togglePopover(id) {
-  ['reactionsPopover', 'bgPopover', 'optionsPopover'].forEach(p => {
+  ['reactionsPopover', 'bgPopover'].forEach(p => {
     if (p !== id) document.getElementById(p).classList.remove('open');
   });
   const popover = document.getElementById(id);
   popover.classList.toggle('open');
-  if (id === 'optionsPopover') {
-    document.getElementById('optionsBtn').setAttribute('aria-expanded', String(popover.classList.contains('open')));
-  }
 }
 
 // ============================================================
@@ -934,13 +930,29 @@ function connectSocket() {
 
   // These commands originate from the verified meeting owner on the server.
   socket.on('admin-audio-state', ({ muted }) => {
-    setMicEnabled(!muted);
-    addSystemChatLine(`The meeting owner ${muted ? 'muted' : 'unmuted'} you.`);
+    if (muted) { 
+      setMicEnabled(false);
+      addSystemChatLine('The meeting owner muted you.');
+    }
   });
 
   socket.on('admin-camera-state', ({ enabled }) => {
-    setCameraEnabled(!!enabled);
-    addSystemChatLine(`The meeting owner turned your camera ${enabled ? 'on' : 'off'}.`);
+    if (!enabled) { 
+      setCameraEnabled(false);
+      addSystemChatLine('The meeting owner turned your camera off.');
+    }
+  });
+  
+  socket.on('admin-request-audio', () => {
+    if (confirm("The meeting owner is asking you to unmute your microphone. Allow?")) {
+      setMicEnabled(true);
+    }
+  });
+
+  socket.on('admin-request-camera', () => {
+    if (confirm("The meeting owner is asking you to turn on your camera. Allow?")) {
+      setCameraEnabled(true);
+    }
   });
 
   socket.on('admin-stop-screen-share', () => {
@@ -1440,10 +1452,6 @@ document.addEventListener('click', (e) => {
   }
   if (!e.target.closest('#bgBtn') && !e.target.closest('#bgPopover')) {
     document.getElementById('bgPopover').classList.remove('open');
-  }
-  if (!e.target.closest('#optionsBtn') && !e.target.closest('#optionsPopover')) {
-    document.getElementById('optionsPopover').classList.remove('open');
-    document.getElementById('optionsBtn').setAttribute('aria-expanded', 'false');
   }
 });
 

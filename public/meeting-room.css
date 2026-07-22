@@ -17,16 +17,17 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 
 .room-body { flex: 1; display: flex; overflow: hidden; }
 
-/* HIDE SCROLLBAR FROM VIDEO AREA */
+/* PREVENT SCROLLING AND AUTO-CENTER VIDEO AREA */
 .video-area {
   flex: 1;
   padding: 14px;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  display: flex;           /* Changed from grid to flex */
+  flex-wrap: wrap;         /* Allow tiles to wrap to new rows */
+  justify-content: center; /* Center horizontally */
+  align-items: center;     /* Center vertically */
+  align-content: center;   /* Group the entire grid in the middle */
   gap: 12px;
-  overflow-y: auto;
-  align-content: start;
-  scrollbar-width: none;
+  overflow: hidden;        /* Completely disable scrolling */
 }
 
 .video-area::-webkit-scrollbar {
@@ -34,7 +35,7 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 }
 
 .video-area.has-spotlight {
-  grid-template-columns: 1fr;
+  flex-direction: column;
 }
 .video-area.has-spotlight .video-tile:not(.spotlight) {
   display: none;
@@ -50,6 +51,14 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   display: flex;
   align-items: center;
   justify-content: center;
+  
+  /* Flexbox scaling properties for Google Meet look */
+  flex: 1 1 300px;         /* Base size, will grow to fill empty space */
+  max-width: 100%;         /* Prevent horizontal overflow */
+  min-width: 180px;        /* Prevent tiles from becoming microscopic */
+  
+  /* Cap height to the viewport minus the header/footer heights so it never forces a scroll */
+  max-height: calc(100vh - 170px); 
 }
 .video-tile.spotlight { aspect-ratio: unset; height: 100%; }
 .video-tile.speaking { box-shadow: 0 0 0 3px #22c55e; }
@@ -379,17 +388,8 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
    OPTIONS + OWNER MODERATION PANEL
    ============================================================ */
 
-.options-popover { width: 230px; padding: 6px; }
-.option-btn {
-  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
-  padding: 10px; color: #e5e7eb; background: transparent; border: 0; border-radius: 8px; cursor: pointer;
-}
-.option-btn:hover, .option-btn.active { background: #334155; }
-.option-btn > span:first-child { font-size: 18px; }
-.option-btn strong, .option-btn small { display: block; }
-.option-btn strong { font-size: 13px; }
-.option-btn small { color: #94a3b8; font-size: 11px; margin-top: 2px; }
-.option-btn.active small { color: #86efac; }
+.captions-toggle { font-size: 13px; font-weight: 800; letter-spacing: -0.04em; }
+.captions-toggle.active { background: #2563eb; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25); }
 .admin-settings-btn { background: #7c3aed; }
 .admin-settings-btn:hover { background: #6d28d9; }
 
