@@ -30,7 +30,29 @@ Meetings are real, live video calls — not just calendar entries.
 - Uses **WebRTC** (peer-to-peer video/audio) with **Socket.io** as the signaling server — no third-party video service required.
 - In the room: toggle 🎤 mic and 📷 camera on/off, see everyone's video tile live, and use the built-in 💬 chat panel to send text messages to everyone in the call.
 - Access is enforced server-side: only the meeting's creator, invited employees, or the super admin can join — checked both on page load (`GET /api/meetings/:id`) and again when the socket connects (`join-room` event), so people can't guess a meeting link and get in.
-- Good for small-to-medium teams (mesh WebRTC — every participant connects directly to every other participant, ideal for up to ~6 people per call with the free public STUN server). For larger company-wide calls, or use across strict corporate firewalls/NAT, add a TURN server (e.g. coturn or Twilio's) — ask and it can be wired in.
+- Good for small-to-medium teams (mesh WebRTC — every participant connects directly to every other participant, ideal for up to ~6 people per call). A **TURN relay** is included by default (Open Relay) so calls work across different networks when deployed on Railway; for production scale, set your own TURN credentials (see below).
+
+### Deploying on Railway (video/audio fix)
+WebRTC needs more than HTTPS — when users are on different networks, peer-to-peer connections often fail without a **TURN server** (you get black video, no audio, broken screen share).
+
+This project now ships with:
+- **ICE candidate queuing** — fixes dropped connections during setup
+- **TURN relay fallback** — works out of the box via Open Relay (good for testing)
+- **Screen share renegotiation** — remotes actually receive the shared screen track
+
+**Railway environment variables (recommended for production):**
+```
+NODE_ENV=production
+SESSION_SECRET=your-long-random-secret
+APP_URL=https://your-app.up.railway.app
+TURN_URL=turn:your-turn-server:3478
+TURN_USERNAME=your-turn-user
+TURN_CREDENTIAL=your-turn-password
+```
+
+Free/cheap TURN options: [Metered.ca](https://www.metered.ca/tools/openrelay/) (Open Relay, already used as fallback), [Cloudflare Calls](https://developers.cloudflare.com/calls/), or self-hosted [coturn](https://github.com/coturn/coturn).
+
+After changing env vars, redeploy on Railway, then test with two browsers on **different networks** (e.g. phone hotspot vs home Wi‑Fi).
 
 ### Try the video call
 1. `npm install` (includes `socket.io`).
@@ -61,7 +83,7 @@ meeting-platform/
 - Add a "change password" feature for all roles.
 - Add email notifications when invited to a meeting.
 - Add screen sharing in the meeting room.
-- Add a TURN server for reliable connections across restrictive networks.
+- Add a TURN server for reliable connections across restrictive networks. *(Done — see "Deploying on Railway" above.)*
 - Add recurring meetings / calendar view.
 - Move from JSON file to a real database (MongoDB/Postgres) for production scale.
 - Add HTTPS + a real `SESSION_SECRET` via environment variable before deploying (WebRTC's `getUserMedia` requires HTTPS on any non-localhost domain).

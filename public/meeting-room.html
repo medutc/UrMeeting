@@ -193,7 +193,55 @@ function getRemoteState(socketId) {
   }
   return remoteState[socketId];
 }
-const STUN_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+let iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+async function loadIceConfig() {
+  try {
+    const data = await apiGet('/api/ice-config');
+    if (data.iceServers && data.iceServers.length) {
+      iceConfig = { iceServers: data.iceServers, iceCandidatePoolSize: 10 };
+    }
+  } catch (err) {
+    console.warn('Could not load ICE config, using STUN-only fallback', err);
+  }
+}
+
+async function flushPendingIceCandidates(entry) {
+  if (!entry.pendingCandidates || !entry.pendingCandidates.length) return;
+  const pending = entry.pendingCandidates.splice(0);
+  for (const candidate of pending) {
+    try {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) {
+      console.warn('Failed to add queued ICE candidate', e);
+    }
+  }
+}
+
+async function addIceCandidateToPeer(entry, candidateData) {
+  if (!entry.pendingCandidates) entry.pendingCandidates = [];
+  if (!entry.pc.remoteDescription) {
+    entry.pendingCandidates.push(candidateData);
+    return;
+  }
+  try {
+    await entry.pc.addIceCandidate(new RTCIceCandidate(candidateData));
+  } catch (e) {
+    console.warn('Failed to add ICE candidate', e);
+  }
+}
+
+async function renegotiatePeer(socketId) {
+  const entry = peers[socketId];
+  if (!entry?.pc || entry.pc.signalingState === 'closed') return;
+  try {
+    const offer = await entry.pc.createOffer();
+    await entry.pc.setLocalDescription(offer);
+    socket.emit('signal', { to: socketId, data: entry.pc.localDescription });
+  } catch (e) {
+    console.warn('Renegotiation failed for peer', socketId, e);
+  }
+}
 
 // ============================================================
 // SOUND NOTIFICATION FUNCTIONS
@@ -626,6 +674,8 @@ async function init() {
   currentUser = await requireAuth();
   if (!currentUser) return;
 
+  await loadIceConfig();
+
   try {
     const data = await apiGet('/api/meetings/' + meetingId);
     meeting = data.meeting;
@@ -844,13 +894,15 @@ function connectSocket() {
 
     if (data.type === 'offer') {
       await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
+      await flushPendingIceCandidates(entry);
       const answer = await entry.pc.createAnswer();
       await entry.pc.setLocalDescription(answer);
       socket.emit('signal', { to: from, data: entry.pc.localDescription });
     } else if (data.type === 'answer') {
       await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
+      await flushPendingIceCandidates(entry);
     } else if (data.candidate) {
-      try { await entry.pc.addIceCandidate(data); } catch (e) { }
+      await addIceCandidateToPeer(entry, data);
     }
   });
 
@@ -985,10 +1037,10 @@ function applyMutedIcon(tileId, muted) {
 }
 
 function createPeerConnection(socketId, name, isInitiator) {
-  const pc = new RTCPeerConnection(STUN_CONFIG);
+  const pc = new RTCPeerConnection(iceConfig);
   const state = getRemoteState(socketId);
   if (name) state.name = name;
-  peers[socketId] = { pc, name, sharingScreen: state.sharingScreen, handRaised: state.handRaised };
+  peers[socketId] = { pc, name, sharingScreen: state.sharingScreen, handRaised: state.handRaised, pendingCandidates: [] };
 
   const sendStream = currentOutboundStream();
   if (outboundVideoTrack) pc.addTrack(outboundVideoTrack, sendStream);
@@ -996,6 +1048,12 @@ function createPeerConnection(socketId, name, isInitiator) {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('signal', { to: socketId, data: e.candidate });
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed') {
+      console.warn('Peer connection failed for', socketId, '- check network/TURN settings');
+    }
   };
 
   pc.ontrack = (e) => {
@@ -1053,31 +1111,41 @@ function createPeerConnection(socketId, name, isInitiator) {
     if (!combinedStream.getTracks().includes(e.track)) {
       combinedStream.addTrack(e.track);
     }
+    videoEl.play().catch(() => {});
     e.track.addEventListener('ended', () => {
       if (combinedStream.getTracks().includes(e.track)) combinedStream.removeTrack(e.track);
     });
-    const remoteCameraState = getRemoteState(socketId);
-    tile.classList.toggle('cam-off', !remoteCameraState.cameraOn && !remoteCameraState.sharingScreen);
+    if (e.track.kind === 'video') {
+      const remoteCameraState = getRemoteState(socketId);
+      const showVideo = remoteCameraState.sharingScreen || (remoteCameraState.cameraOn && !e.track.muted);
+      tile.classList.toggle('cam-off', !showVideo);
+      e.track.onunmute = () => {
+        const rs = getRemoteState(socketId);
+        tile.classList.toggle('cam-off', !rs.sharingScreen && !rs.cameraOn);
+        videoEl.play().catch(() => {});
+      };
+    }
   };
 
   if (isInitiator) {
-    pc.onnegotiationneeded = async () => {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit('signal', { to: socketId, data: pc.localDescription });
-    };
+    renegotiatePeer(socketId);
   }
 
   return peers[socketId];
 }
 
-function replaceOutboundTrackOnAllPeers(newTrack) {
+async function replaceOutboundTrackOnAllPeers(newTrack) {
   syncLocalOutboundStream();
-  Object.values(peers).forEach(({ pc }) => {
+  const peerIds = Object.keys(peers);
+  for (const socketId of peerIds) {
+    const { pc } = peers[socketId];
     const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender) sender.replaceTrack(newTrack);
+    if (sender) await sender.replaceTrack(newTrack);
     else if (newTrack) pc.addTrack(newTrack, localOutboundStream);
-  });
+  }
+  for (const socketId of peerIds) {
+    await renegotiatePeer(socketId);
+  }
 }
 
 function updateParticipantCount() {
@@ -1105,12 +1173,26 @@ function toggleCam() {
   setCameraEnabled(!cameraOn);
 }
 
-function setCameraEnabled(enabled) {
+async function setCameraEnabled(enabled) {
   const camTrack = rawStream.getVideoTracks()[0];
   if (!camTrack) return;
   cameraOn = !!enabled;
   camTrack.enabled = cameraOn;
   document.getElementById('camBtn').classList.toggle('off', !cameraOn);
+
+  if (!isScreenSharing) {
+    if (!cameraOn) {
+      if (segmentationActive) stopSegmentation();
+      outboundVideoTrack = null;
+      await replaceOutboundTrackOnAllPeers(null);
+    } else if (currentBg && currentBg !== 'none') {
+      await applyBackground(currentBg);
+    } else {
+      outboundVideoTrack = camTrack;
+      await replaceOutboundTrackOnAllPeers(camTrack);
+    }
+  }
+
   updateLocalTileStream();
   socket?.emit('camera-changed', { meetingId, enabled: cameraOn });
 }
@@ -1131,7 +1213,7 @@ async function toggleScreenShare() {
     outboundVideoTrack = screenTrack;
     isScreenSharing = true;
 
-    replaceOutboundTrackOnAllPeers(screenTrack);
+    await replaceOutboundTrackOnAllPeers(screenTrack);
     updateLocalTileStream();
     document.getElementById('tile-local').querySelector('video').classList.add('screen-track');
     document.getElementById('screenShareBtn').classList.add('on-highlight');
@@ -1143,12 +1225,12 @@ async function toggleScreenShare() {
   }
 }
 
-function stopScreenShare() {
+async function stopScreenShare() {
   if (!isScreenSharing) return;
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
   isScreenSharing = false;
   outboundVideoTrack = preScreenShareTrack;
-  replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+  await replaceOutboundTrackOnAllPeers(outboundVideoTrack);
   updateLocalTileStream();
   const localVideo = document.getElementById('tile-local').querySelector('video');
   localVideo.classList.remove('screen-track');
@@ -1291,7 +1373,7 @@ async function applyBackground(bgId, previewVideoOverride) {
     stopSegmentation();
     if (isScreenSharing) return;
     outboundVideoTrack = camTrack;
-    replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+    await replaceOutboundTrackOnAllPeers(outboundVideoTrack);
     const el = previewVideoOverride || document.querySelector('#tile-local video');
     if (el) el.srcObject = new MediaStream([camTrack]);
     if (!previewVideoOverride) updateLocalTileStream();
@@ -1341,6 +1423,10 @@ async function startSegmentation(camTrack, mode, bgImageEl, previewVideoOverride
     segmenter.setOptions({ modelSelection: 1 });
   }
 
+  const canvasStream = bgCanvas.captureStream(25);
+  const processedTrack = canvasStream.getVideoTracks()[0];
+  let bgFirstFrameSent = false;
+
   segmenter.onResults((results) => {
     bgCtx.save();
     bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
@@ -1360,6 +1446,14 @@ async function startSegmentation(camTrack, mode, bgImageEl, previewVideoOverride
       bgCtx.drawImage(results.image, 0, 0, bgCanvas.width, bgCanvas.height);
     }
     bgCtx.restore();
+
+    if (!bgFirstFrameSent && results.segmentationMask) {
+      bgFirstFrameSent = true;
+      if (!isScreenSharing) {
+        outboundVideoTrack = processedTrack;
+        replaceOutboundTrackOnAllPeers(processedTrack);
+      }
+    }
   });
 
   segmentationActive = true;
@@ -1369,14 +1463,6 @@ async function startSegmentation(camTrack, mode, bgImageEl, previewVideoOverride
     bgAnimHandle = requestAnimationFrame(frameLoop);
   }
   frameLoop();
-
-  const canvasStream = bgCanvas.captureStream(25);
-  const processedTrack = canvasStream.getVideoTracks()[0];
-
-  if (!isScreenSharing) {
-    outboundVideoTrack = processedTrack;
-    replaceOutboundTrackOnAllPeers(processedTrack);
-  }
 
   const el = previewVideoOverride || document.querySelector('#tile-local video');
   if (el) el.srcObject = canvasStream;

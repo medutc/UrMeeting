@@ -175,6 +175,41 @@ app.get('/api/me', requireLogin, (req, res) => {
   res.json({ user: sanitizeUser(user) });
 });
 
+// WebRTC ICE servers — STUN for NAT discovery, TURN relays media when P2P fails (required on Railway).
+function buildIceServers() {
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ];
+
+  const turnUrl = process.env.TURN_URL;
+  const turnUser = process.env.TURN_USERNAME;
+  const turnCred = process.env.TURN_CREDENTIAL;
+  if (turnUrl && turnUser && turnCred) {
+    turnUrl.split(',').map(u => u.trim()).filter(Boolean).forEach(url => {
+      iceServers.push({ urls: url, username: turnUser, credential: turnCred });
+    });
+  } else {
+    // Public relay fallback so cross-network calls work without custom TURN setup.
+    // For production, set TURN_URL / TURN_USERNAME / TURN_CREDENTIAL in Railway env vars.
+    iceServers.push({
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    });
+  }
+
+  return iceServers;
+}
+
+app.get('/api/ice-config', requireLogin, (req, res) => {
+  res.json({ iceServers: buildIceServers() });
+});
+
 // ---------- Departments ----------
 app.get('/api/departments', requireLogin, (req, res) => {
   res.json({ departments: db.get('departments').value() });
