@@ -231,16 +231,28 @@ async function addIceCandidateToPeer(entry, candidateData) {
   }
 }
 
-async function renegotiatePeer(socketId) {
+async function renegotiatePeer(socketId, iceRestart = false) {
   const entry = peers[socketId];
   if (!entry?.pc || entry.pc.signalingState === 'closed') return;
   try {
-    const offer = await entry.pc.createOffer();
+    const offer = await entry.pc.createOffer(iceRestart ? { iceRestart: true } : undefined);
     await entry.pc.setLocalDescription(offer);
     socket.emit('signal', { to: socketId, data: entry.pc.localDescription });
   } catch (e) {
     console.warn('Renegotiation failed for peer', socketId, e);
   }
+}
+
+// Called when ICE connectivity between two peers breaks down (typically because
+// no usable TURN relay was available). Triggers a fresh ICE gathering + offer.
+let iceRestartAttempts = {};
+function restartIce(socketId) {
+  iceRestartAttempts[socketId] = (iceRestartAttempts[socketId] || 0) + 1;
+  if (iceRestartAttempts[socketId] > 3) {
+    console.warn('Giving up on ICE restarts for', socketId, '- TURN server is likely unreachable or misconfigured.');
+    return;
+  }
+  renegotiatePeer(socketId, true);
 }
 
 // ============================================================
@@ -1043,16 +1055,33 @@ function createPeerConnection(socketId, name, isInitiator) {
   peers[socketId] = { pc, name, sharingScreen: state.sharingScreen, handRaised: state.handRaised, pendingCandidates: [] };
 
   const sendStream = currentOutboundStream();
-  if (outboundVideoTrack) pc.addTrack(outboundVideoTrack, sendStream);
-  if (audioTrack) pc.addTrack(audioTrack, sendStream);
+  // Keep explicit references to the senders so we can reliably reuse them later
+  // (replaceTrack) even after a track has been nulled out, e.g. camera toggled off.
+  peers[socketId].videoSender = outboundVideoTrack ? pc.addTrack(outboundVideoTrack, sendStream) : null;
+  peers[socketId].audioSender = audioTrack ? pc.addTrack(audioTrack, sendStream) : null;
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('signal', { to: socketId, data: e.candidate });
   };
 
+  pc.onicegatheringstatechange = () => {
+    console.log('[ICE] gathering state for', socketId, '=', pc.iceGatheringState);
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log('[ICE] connection state for', socketId, '=', pc.iceConnectionState);
+    if (pc.iceConnectionState === 'failed') {
+      // Direct P2P and the configured TURN relay both failed to connect.
+      // Ask the browser to re-gather candidates and try again once.
+      console.warn('ICE failed for', socketId, '- attempting ICE restart. If this keeps happening, configure a reliable TURN server (see README).');
+      restartIce(socketId);
+    }
+  };
+
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') {
       console.warn('Peer connection failed for', socketId, '- check network/TURN settings');
+      addSystemChatLine('Connection trouble with a participant. Retrying...');
     }
   };
 
@@ -1138,10 +1167,26 @@ async function replaceOutboundTrackOnAllPeers(newTrack) {
   syncLocalOutboundStream();
   const peerIds = Object.keys(peers);
   for (const socketId of peerIds) {
-    const { pc } = peers[socketId];
-    const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender) await sender.replaceTrack(newTrack);
-    else if (newTrack) pc.addTrack(newTrack, localOutboundStream);
+    const entry = peers[socketId];
+    const { pc } = entry;
+    // Look the sender up by its *transceiver's mid/kind*, not by whether it
+    // currently has a track attached (a sender's track becomes null once the
+    // camera is turned off, which used to make this lookup fail and caused a
+    // duplicate video sender/m-line to be added on the next toggle).
+    let sender = entry.videoSender && pc.getSenders().includes(entry.videoSender)
+      ? entry.videoSender
+      : pc.getSenders().find(s => s.track && s.track.kind === 'video');
+    if (!sender) {
+      // Fall back to matching by transceiver kind so we still find a video
+      // sender even when its track is currently null.
+      sender = pc.getTransceivers().map(t => t.sender).find(s => s.track === null && pc.getSenders().includes(s) && !s.track && s === entry.videoSender);
+    }
+    if (sender) {
+      await sender.replaceTrack(newTrack);
+      entry.videoSender = sender;
+    } else if (newTrack) {
+      entry.videoSender = pc.addTrack(newTrack, localOutboundStream);
+    }
   }
   for (const socketId of peerIds) {
     await renegotiatePeer(socketId);

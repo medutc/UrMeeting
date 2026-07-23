@@ -190,11 +190,24 @@ function buildIceServers() {
       iceServers.push({ urls: url, username: turnUser, credential: turnCred });
     });
   } else {
-    // Public relay fallback so cross-network calls work without custom TURN setup.
-    // For production, set TURN_URL / TURN_USERNAME / TURN_CREDENTIAL in Railway env vars.
+    // Public relay fallback so cross-network calls don't fail outright without a
+    // custom TURN setup, BUT this free shared relay (openrelay.metered.ca) is
+    // heavily used, rate-limited, and often refuses/drops connections in
+    // production. If you see black screens / no audio between people on
+    // different networks (e.g. your Railway deployment), this fallback is the
+    // most likely cause.
+    //
+    // Fix: sign up for a free TURN server (e.g. https://www.metered.ca/tools/openrelay/
+    // dashboard, Twilio NTS, Xirsys, or self-hosted coturn) and set these env vars
+    // in Railway -> your service -> Variables:
+    //   TURN_URL        e.g. turn:relay.metered.ca:80,turn:relay.metered.ca:443,turn:relay.metered.ca:443?transport=tcp
+    //   TURN_USERNAME   the credential username from your TURN provider
+    //   TURN_CREDENTIAL the credential password/secret from your TURN provider
+    console.warn('[ICE] No TURN_URL/TURN_USERNAME/TURN_CREDENTIAL set - falling back to the free, unreliable openrelay.metered.ca relay. Cross-network calls (e.g. you + a friend on different networks) may fail with no video/audio/screen-share. Set your own TURN server env vars on Railway for reliable calls.');
     iceServers.push({
       urls: [
         'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:80?transport=tcp',
         'turn:openrelay.metered.ca:443',
         'turn:openrelay.metered.ca:443?transport=tcp'
       ],
