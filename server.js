@@ -605,6 +605,7 @@ app.get('/api/messages/conversations', requireLogin, (req, res) => {
 
   allMessages.forEach(m => {
     if (m.fromId !== meId && m.toId !== meId) return;
+    if ((m.deletedFor || []).includes(meId)) return; // I deleted this one "for me"
     const otherId = m.fromId === meId ? m.toId : m.fromId;
     if (!byUser[otherId] || new Date(m.createdAt) > new Date(byUser[otherId].createdAt)) {
       byUser[otherId] = m;
@@ -614,11 +615,15 @@ app.get('/api/messages/conversations', requireLogin, (req, res) => {
   const conversations = Object.keys(byUser).map(otherId => {
     const u = users.find(x => x.id === otherId);
     const last = byUser[otherId];
-    const unreadCount = allMessages.filter(m => m.fromId === otherId && m.toId === meId && !m.read).length;
+    const unreadCount = allMessages.filter(m => m.fromId === otherId && m.toId === meId && !m.read && !(m.deletedFor || []).includes(meId)).length;
+    let preview;
+    if (last.deletedForAll) preview = 'This message was deleted';
+    else if (last.attachment && last.attachment.mimetype && last.attachment.mimetype.startsWith('audio/')) preview = '🎤 Voice message';
+    else preview = last.text || (last.attachment ? `📎 ${last.attachment.filename}` : '');
     return {
       userId: otherId,
       name: u ? u.name : 'Unknown user',
-      lastMessage: last.text || (last.attachment ? `📎 ${last.attachment.filename}` : ''),
+      lastMessage: preview,
       lastMessageAt: last.createdAt,
       unreadCount
     };
@@ -637,6 +642,7 @@ app.get('/api/messages/:userId', requireLogin, (req, res) => {
   const thread = db.get('messages')
     .filter(m => (m.fromId === meId && m.toId === otherId) || (m.fromId === otherId && m.toId === meId))
     .value()
+    .filter(m => !(m.deletedFor || []).includes(meId)) // hide messages this user deleted "for me"
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
   // Mark incoming messages as read
@@ -646,6 +652,40 @@ app.get('/api/messages/:userId', requireLogin, (req, res) => {
     .write();
 
   res.json({ messages: thread, otherUser: { id: other.id, name: other.name, email: other.email } });
+});
+
+// Delete a message: mode "me" hides it only for the requester, mode "all" wipes its
+// content for everyone (WhatsApp-style "Delete for everyone") and is only allowed
+// for the message's original sender.
+app.delete('/api/messages/:id', requireLogin, (req, res) => {
+  const meId = req.session.userId;
+  const mode = req.body && req.body.mode === 'all' ? 'all' : 'me';
+  const message = db.get('messages').find({ id: req.params.id }).value();
+  if (!message) return res.status(404).json({ error: 'Message not found' });
+  if (message.fromId !== meId && message.toId !== meId) {
+    return res.status(403).json({ error: 'Not your conversation' });
+  }
+
+  if (mode === 'all') {
+    if (message.fromId !== meId) {
+      return res.status(403).json({ error: 'Only the sender can delete a message for everyone' });
+    }
+    db.get('messages').find({ id: req.params.id }).assign({
+      text: '',
+      attachment: null,
+      deletedForAll: true
+    }).write();
+    const otherId = message.fromId === meId ? message.toId : message.fromId;
+    io.to('user:' + meId).emit('message-deleted', { id: req.params.id, mode: 'all' });
+    io.to('user:' + otherId).emit('message-deleted', { id: req.params.id, mode: 'all' });
+  } else {
+    const deletedFor = new Set(message.deletedFor || []);
+    deletedFor.add(meId);
+    db.get('messages').find({ id: req.params.id }).assign({ deletedFor: Array.from(deletedFor) }).write();
+    io.to('user:' + meId).emit('message-deleted', { id: req.params.id, mode: 'me' });
+  }
+
+  res.json({ success: true });
 });
 
 // Send a direct message: JSON text-only, OR multipart/form-data with an optional file

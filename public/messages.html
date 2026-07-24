@@ -50,7 +50,15 @@
               <button class="icon-btn" id="attachBtn" title="Attach image, video, or file">📎</button>
               <input type="file" id="fileInput" style="display:none;">
               <input type="text" id="textInput" placeholder="Type a message...">
+              <button class="icon-btn" id="micBtn" title="Record a voice message">🎤</button>
               <button class="icon-btn send" id="sendBtn" title="Send">➤</button>
+            </div>
+            <div class="recording-bar" id="recordingBar" style="display:none;">
+              <span class="rec-dot"></span>
+              <span id="recordingTime">0:00</span>
+              <span style="flex:1;">Recording voice message…</span>
+              <button class="btn btn-secondary" id="cancelRecordBtn">Cancel</button>
+              <button class="btn" id="stopRecordBtn">Stop &amp; Send</button>
             </div>
           </div>
         </div>
@@ -69,6 +77,13 @@ let activeUserId = null;
 let socket = null;
 let pendingFile = null;
 
+// Voice recording state
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingStream = null;
+let recordingTimer = null;
+let recordingSeconds = 0;
+
 async function init() {
   currentUser = await requireAuth();
   if (!currentUser) return;
@@ -82,6 +97,18 @@ async function init() {
       apiGet('/api/messages/' + activeUserId); // marks as read server-side
     }
     loadConversationsAndDirectory(); // refresh previews/unread badges
+  });
+  socket.on('message-deleted', ({ id, mode }) => {
+    const row = document.querySelector(`[data-message-id="${id}"]`);
+    if (mode === 'all') {
+      if (row) {
+        const bubble = row.querySelector('.bubble-content');
+        if (bubble) bubble.innerHTML = '<div class="deleted-text">🚫 This message was deleted</div>';
+      }
+    } else if (row) {
+      row.remove();
+    }
+    loadConversationsAndDirectory();
   });
 
   await loadConversationsAndDirectory();
@@ -100,6 +127,91 @@ async function init() {
       preview.classList.remove('show');
     }
   });
+
+  document.getElementById('micBtn').addEventListener('click', startRecording);
+  document.getElementById('stopRecordBtn').addEventListener('click', () => stopRecording(true));
+  document.getElementById('cancelRecordBtn').addEventListener('click', () => stopRecording(false));
+
+  // Close any open message menu when clicking elsewhere
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.msg-menu-wrap')) closeAllMessageMenus();
+  });
+}
+
+// ---------- Voice messages ----------
+async function startRecording() {
+  if (!activeUserId) return alert('Select a conversation first.');
+  if (mediaRecorder) return;
+
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    alert('Microphone access is required to record a voice message.');
+    return;
+  }
+
+  recordedChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+  mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
+
+  mediaRecorder.addEventListener('dataavailable', (e) => {
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  });
+
+  mediaRecorder.addEventListener('stop', async () => {
+    recordingStream.getTracks().forEach(t => t.stop());
+    recordingStream = null;
+    const shouldSend = mediaRecorder.dataset && mediaRecorder.dataset.send === '1';
+    mediaRecorder = null;
+
+    if (shouldSend && recordedChunks.length > 0) {
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      await sendVoiceMessage(blob);
+    }
+    recordedChunks = [];
+  });
+
+  mediaRecorder.start();
+  recordingSeconds = 0;
+  document.getElementById('recordingBar').style.display = 'flex';
+  document.getElementById('recordingTime').textContent = '0:00';
+  document.getElementById('micBtn').classList.add('recording');
+  recordingTimer = setInterval(() => {
+    recordingSeconds++;
+    const m = Math.floor(recordingSeconds / 60);
+    const s = String(recordingSeconds % 60).padStart(2, '0');
+    document.getElementById('recordingTime').textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+function stopRecording(send) {
+  if (!mediaRecorder) return;
+  mediaRecorder.dataset = mediaRecorder.dataset || {};
+  mediaRecorder.dataset.send = send ? '1' : '0';
+  if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+
+  clearInterval(recordingTimer);
+  recordingTimer = null;
+  document.getElementById('recordingBar').style.display = 'none';
+  document.getElementById('micBtn').classList.remove('recording');
+}
+
+async function sendVoiceMessage(blob) {
+  if (!activeUserId) return;
+  const formData = new FormData();
+  formData.append('toId', activeUserId);
+  formData.append('file', blob, `voice-${Date.now()}.webm`);
+
+  try {
+    const res = await fetch('/api/messages', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to send voice message');
+    renderMessage(data.message);
+    scrollThreadToBottom();
+    loadConversationsAndDirectory();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 function goBack() { redirectByRole(currentUser.role); }
@@ -180,18 +292,40 @@ function renderMessage(m) {
   const isMe = m.fromId === currentUser.id;
   const row = document.createElement('div');
   row.className = 'bubble-row' + (isMe ? ' me' : '');
+  row.dataset.messageId = m.id;
 
   const time = new Date(m.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  let inner = '';
-  if (m.text) inner += `<div>${escapeHtml(m.text)}</div>`;
-  if (m.attachment) inner += renderAttachment(m.attachment);
-  inner += `<span class="time">${time}</span>`;
 
-  row.innerHTML = `<div class="bubble">${inner}</div>`;
+  let contentHtml;
+  if (m.deletedForAll) {
+    contentHtml = '<div class="deleted-text">🚫 This message was deleted</div>';
+  } else {
+    let inner = '';
+    if (m.text) inner += `<div>${escapeHtml(m.text)}</div>`;
+    if (m.attachment) inner += renderAttachment(m.attachment);
+    inner += `<span class="time">${time}</span>`;
+    contentHtml = inner;
+  }
+
+  const menuOptions = [];
+  if (!m.deletedForAll) {
+    if (isMe) menuOptions.push(`<button onclick="deleteMessage('${m.id}','all')">Delete for everyone</button>`);
+    menuOptions.push(`<button onclick="deleteMessage('${m.id}','me')">Delete for me</button>`);
+  }
+
+  row.innerHTML = `
+    <div class="msg-menu-wrap">
+      <button class="msg-menu-btn" onclick="toggleMessageMenu(event, '${m.id}')" title="Message options">⋮</button>
+      <div class="msg-menu" id="menu-${m.id}">${menuOptions.join('')}</div>
+    </div>
+    <div class="bubble"><div class="bubble-content">${contentHtml}</div></div>`;
   thread.appendChild(row);
 }
 
 function renderAttachment(att) {
+  if (att.mimetype.startsWith('audio/')) {
+    return `<div class="voice-attach"><audio src="${att.url}" controls></audio></div>`;
+  }
   if (att.mimetype.startsWith('image/')) {
     return `<a href="${att.url}" target="_blank"><img src="${att.url}" alt="${escapeHtml(att.filename)}"></a>`;
   }
@@ -206,6 +340,51 @@ function renderAttachment(att) {
       <div class="file-size">${sizeKb} KB — click to download</div>
     </div>
   </a>`;
+}
+
+function closeAllMessageMenus() {
+  document.querySelectorAll('.msg-menu.show').forEach(el => el.classList.remove('show'));
+}
+
+function toggleMessageMenu(evt, messageId) {
+  evt.stopPropagation();
+  const menu = document.getElementById('menu-' + messageId);
+  const isOpen = menu.classList.contains('show');
+  closeAllMessageMenus();
+  if (!isOpen) menu.classList.add('show');
+}
+
+async function deleteMessage(messageId, mode) {
+  closeAllMessageMenus();
+  const confirmText = mode === 'all'
+    ? 'Delete this message for everyone? This cannot be undone.'
+    : 'Delete this message for you only?';
+  if (!confirm(confirmText)) return;
+
+  try {
+    const res = await fetch('/api/messages/' + messageId, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Failed to delete message');
+
+    const row = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (mode === 'all') {
+      if (row) {
+        const bubble = row.querySelector('.bubble-content');
+        if (bubble) bubble.innerHTML = '<div class="deleted-text">🚫 This message was deleted</div>';
+        const menu = row.querySelector('.msg-menu');
+        if (menu) menu.innerHTML = '';
+      }
+    } else if (row) {
+      row.remove();
+    }
+    loadConversationsAndDirectory();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 function scrollThreadToBottom() {
