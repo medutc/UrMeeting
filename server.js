@@ -66,9 +66,36 @@ const emailTransporter = (() => {
   return null; // Email disabled if no config provided
 })();
 
+// Railway (and many other PaaS hosts) block outbound SMTP ports (465/587) on
+// their network, which makes Gmail/SMTP nodemailer connections time out even
+// with correct credentials. Resend sends over plain HTTPS (port 443), which
+// is never blocked, so we prefer it when RESEND_API_KEY is configured.
+// Sign up free at https://resend.com, verify a sending domain (or use their
+// shared onboarding domain for testing), and set RESEND_API_KEY + EMAIL_FROM.
+async function sendViaResend(participantEmail, subject, html) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null; // not configured, caller should fall back to SMTP
+
+  const from = process.env.EMAIL_FROM || 'UrMeeting <onboarding@resend.dev>';
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ from, to: [participantEmail], subject, html })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => response.statusText);
+    throw new Error(`Resend API error (${response.status}): ${errText}`);
+  }
+  return true;
+}
+
 async function sendMeetingInviteEmail(participantEmail, participantName, meeting, creatorName) {
-  if (!emailTransporter) {
-    console.log('[EMAIL DISABLED] Configure GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
+  if (!process.env.RESEND_API_KEY && !emailTransporter) {
+    console.log('[EMAIL DISABLED] Configure RESEND_API_KEY (recommended on Railway) or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
     return false;
   }
 
@@ -95,17 +122,36 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
     </p>
   `;
 
+  const subject = `Meeting Invitation: ${meeting.title}`;
+
+  // Prefer Resend (HTTPS-based) since Railway commonly blocks the raw SMTP
+  // ports (465/587) that Gmail/nodemailer need, causing "Connection timeout".
+  if (process.env.RESEND_API_KEY) {
+    try {
+      await sendViaResend(participantEmail, subject, emailContent);
+      console.log(`[EMAIL SENT via Resend] to ${participantEmail}`);
+      return true;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] Resend failed to send to ${participantEmail}:`, err.message);
+      // fall through to SMTP if it's also configured, otherwise give up
+      if (!emailTransporter) return false;
+    }
+  }
+
+  if (!emailTransporter) return false;
+
   try {
     await emailTransporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.GMAIL_USER || process.env.SMTP_USER,
       to: participantEmail,
-      subject: `Meeting Invitation: ${meeting.title}`,
+      subject,
       html: emailContent
     });
-    console.log(`[EMAIL SENT] to ${participantEmail}`);
+    console.log(`[EMAIL SENT via SMTP] to ${participantEmail}`);
     return true;
   } catch (err) {
-    console.error(`[EMAIL ERROR] Failed to send to ${participantEmail}:`, err.message);
+    console.error(`[EMAIL ERROR] SMTP failed to send to ${participantEmail}:`, err.message);
+    console.error('[EMAIL HINT] Railway often blocks outbound SMTP ports (465/587), causing "Connection timeout". Set RESEND_API_KEY instead (sends over HTTPS/443) - see README.');
     return false;
   }
 }
