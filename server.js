@@ -108,6 +108,41 @@ async function sendViaBrevo(participantEmail, participantName, subject, html) {
   return true;
 }
 
+// SendGrid (HTTPS-based, port 443). No domain required — verify a single
+// sender email under Settings > Sender Authentication > Single Sender
+// Verification, then generate an API key under Settings > API Keys and set
+// SENDGRID_API_KEY + EMAIL_FROM (must match the verified sender email).
+async function sendViaSendGrid(participantEmail, participantName, subject, html) {
+  const apiKey = process.env.SENDGRID_API_KEY;
+  if (!apiKey) return null; // not configured, caller should fall back to other providers
+
+  const fromEmail = process.env.EMAIL_FROM || process.env.SENDGRID_SENDER_EMAIL;
+  if (!fromEmail) {
+    throw new Error('SENDGRID_API_KEY is set but EMAIL_FROM (your verified SendGrid sender email) is missing.');
+  }
+  const fromName = process.env.EMAIL_FROM_NAME || 'UrMeeting';
+
+  const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: participantEmail, name: participantName || undefined }] }],
+      from: { email: fromEmail, name: fromName },
+      subject,
+      content: [{ type: 'text/html', value: html }]
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => response.statusText);
+    throw new Error(`SendGrid API error (${response.status}): ${errText}`);
+  }
+  return true;
+}
+
 async function sendViaResend(participantEmail, subject, html) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return null; // not configured, caller should fall back to SMTP
@@ -130,8 +165,8 @@ async function sendViaResend(participantEmail, subject, html) {
 }
 
 async function sendMeetingInviteEmail(participantEmail, participantName, meeting, creatorName) {
-  if (!process.env.BREVO_API_KEY && !process.env.RESEND_API_KEY && !emailTransporter) {
-    console.log('[EMAIL DISABLED] Configure BREVO_API_KEY (recommended on Railway) or RESEND_API_KEY or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
+  if (!process.env.BREVO_API_KEY && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !emailTransporter) {
+    console.log('[EMAIL DISABLED] Configure BREVO_API_KEY, SENDGRID_API_KEY, or RESEND_API_KEY (all HTTPS-based, recommended on Railway), or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
     return false;
   }
 
@@ -173,6 +208,17 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
     }
   }
 
+  if (process.env.SENDGRID_API_KEY) {
+    try {
+      await sendViaSendGrid(participantEmail, participantName, subject, emailContent);
+      console.log(`[EMAIL SENT via SendGrid] to ${participantEmail}`);
+      return true;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] SendGrid failed to send to ${participantEmail}:`, err.message);
+      // fall through to Resend/SMTP if configured, otherwise give up below
+    }
+  }
+
   if (process.env.RESEND_API_KEY) {
     try {
       await sendViaResend(participantEmail, subject, emailContent);
@@ -186,7 +232,7 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
   }
 
   if (!emailTransporter) {
-    if (process.env.BREVO_API_KEY || process.env.RESEND_API_KEY) return false; // already tried and failed above
+    if (process.env.BREVO_API_KEY || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY) return false; // already tried and failed above
     return false;
   }
 
