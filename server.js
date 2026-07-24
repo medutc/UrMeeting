@@ -1,4 +1,5 @@
 
+
 // Load environment variables from .env file
 require('dotenv').config();
 
@@ -68,10 +69,45 @@ const emailTransporter = (() => {
 
 // Railway (and many other PaaS hosts) block outbound SMTP ports (465/587) on
 // their network, which makes Gmail/SMTP nodemailer connections time out even
-// with correct credentials. Resend sends over plain HTTPS (port 443), which
-// is never blocked, so we prefer it when RESEND_API_KEY is configured.
-// Sign up free at https://resend.com, verify a sending domain (or use their
-// shared onboarding domain for testing), and set RESEND_API_KEY + EMAIL_FROM.
+// with correct credentials. Brevo (formerly Sendinblue) and Resend both send
+// over plain HTTPS (port 443), which is never blocked, so we prefer them
+// when their API keys are configured. Brevo is checked first since that's
+// the provider this app is configured to use.
+// Sign up free at https://www.brevo.com, verify a sender email/domain under
+// Senders & IP, generate an API key under SMTP & API > API Keys, then set
+// BREVO_API_KEY + EMAIL_FROM (must be a verified sender in Brevo).
+async function sendViaBrevo(participantEmail, participantName, subject, html) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) return null; // not configured, caller should fall back to other providers
+
+  const fromEmail = process.env.EMAIL_FROM || process.env.BREVO_SENDER_EMAIL;
+  if (!fromEmail) {
+    throw new Error('BREVO_API_KEY is set but EMAIL_FROM (a verified Brevo sender email) is missing.');
+  }
+  const fromName = process.env.EMAIL_FROM_NAME || 'UrMeeting';
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      sender: { name: fromName, email: fromEmail },
+      to: [{ email: participantEmail, name: participantName || undefined }],
+      subject,
+      htmlContent: html
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => response.statusText);
+    throw new Error(`Brevo API error (${response.status}): ${errText}`);
+  }
+  return true;
+}
+
 async function sendViaResend(participantEmail, subject, html) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return null; // not configured, caller should fall back to SMTP
@@ -94,8 +130,8 @@ async function sendViaResend(participantEmail, subject, html) {
 }
 
 async function sendMeetingInviteEmail(participantEmail, participantName, meeting, creatorName) {
-  if (!process.env.RESEND_API_KEY && !emailTransporter) {
-    console.log('[EMAIL DISABLED] Configure RESEND_API_KEY (recommended on Railway) or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
+  if (!process.env.BREVO_API_KEY && !process.env.RESEND_API_KEY && !emailTransporter) {
+    console.log('[EMAIL DISABLED] Configure BREVO_API_KEY (recommended on Railway) or RESEND_API_KEY or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
     return false;
   }
 
@@ -124,8 +160,19 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
 
   const subject = `Meeting Invitation: ${meeting.title}`;
 
-  // Prefer Resend (HTTPS-based) since Railway commonly blocks the raw SMTP
+  // Prefer Brevo (HTTPS-based) since Railway commonly blocks the raw SMTP
   // ports (465/587) that Gmail/nodemailer need, causing "Connection timeout".
+  if (process.env.BREVO_API_KEY) {
+    try {
+      await sendViaBrevo(participantEmail, participantName, subject, emailContent);
+      console.log(`[EMAIL SENT via Brevo] to ${participantEmail}`);
+      return true;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] Brevo failed to send to ${participantEmail}:`, err.message);
+      // fall through to Resend/SMTP if configured, otherwise give up below
+    }
+  }
+
   if (process.env.RESEND_API_KEY) {
     try {
       await sendViaResend(participantEmail, subject, emailContent);
@@ -138,7 +185,10 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
     }
   }
 
-  if (!emailTransporter) return false;
+  if (!emailTransporter) {
+    if (process.env.BREVO_API_KEY || process.env.RESEND_API_KEY) return false; // already tried and failed above
+    return false;
+  }
 
   try {
     await emailTransporter.sendMail({
@@ -151,7 +201,7 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
     return true;
   } catch (err) {
     console.error(`[EMAIL ERROR] SMTP failed to send to ${participantEmail}:`, err.message);
-    console.error('[EMAIL HINT] Railway often blocks outbound SMTP ports (465/587), causing "Connection timeout". Set RESEND_API_KEY instead (sends over HTTPS/443) - see README.');
+    console.error('[EMAIL HINT] Railway often blocks outbound SMTP ports (465/587), causing "Connection timeout". Set BREVO_API_KEY instead (sends over HTTPS/443) - see README.');
     return false;
   }
 }
