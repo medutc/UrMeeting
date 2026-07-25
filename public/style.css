@@ -160,6 +160,21 @@ th { background: var(--th-bg); font-size: 12px; text-transform: uppercase; color
 .checkbox-list label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 4px 0; }
 .checkbox-list input { width: auto; }
 
+.select-all-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--th-bg);
+  cursor: pointer;
+}
+.select-all-row input { width: auto; margin: 0; flex-shrink: 0; }
+
 .login-wrap {
   min-height: 100vh;
   display: flex;
