@@ -7,6 +7,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const session = require('express-session');
+const FileStore = require('session-file-store')(session);
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -256,12 +257,28 @@ app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 // Serve uploaded files from UPLOAD_DIR (may live on a persistent volume in production)
 app.use('/uploads', express.static(UPLOAD_DIR));
+
+// ---------- Session store ----------
+// Previously sessions lived only in express-session's default MemoryStore,
+// which is wiped out every time the Node process restarts. Railway restarts
+// (or sleeps/redeploys) the container far more often than a long-lived VM
+// would, so every restart silently logged everyone out even though their
+// cookie was still valid. Persisting sessions to disk (ideally on the same
+// persistent volume as DATA_DIR/db.json) means a restart no longer forces
+// a fresh login. The cookie itself is also extended to 30 days and set to
+// "rolling" so it renews on every request instead of hard-expiring at a
+// fixed 8-hour mark while someone is still actively using the app.
+const SESSIONS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'sessions');
+fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
 const sessionMiddleware = session({
+  store: new FileStore({ path: SESSIONS_DIR, logFn: () => {} }),
   secret: process.env.SESSION_SECRET || 'meeting-platform-secret-change-me',
   resave: false,
   saveUninitialized: false,
-    cookie: {
-    maxAge: 1000 * 60 * 60 * 8, // 8 hours
+  rolling: true, // refresh the cookie's expiry on every request while the user is active
+  cookie: {
+    maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
     secure: process.env.NODE_ENV === 'production', // HTTPS-only in prod (trust proxy reads X-Forwarded-Proto)
     sameSite: 'lax'
   }
