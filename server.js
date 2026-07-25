@@ -1,5 +1,6 @@
 
 
+
 // Load environment variables from .env file
 require('dotenv').config();
 
@@ -553,14 +554,31 @@ app.put('/api/meetings/:id', requireLogin, requireRole('dept_admin'), (req, res)
   res.json({ meeting: db.get('meetings').find({ id: req.params.id }).value() });
 });
 
-// Delete a meeting (only its creator dept_admin)
+// Delete a meeting (only its creator dept_admin).
+// Before removing it, snapshot attendance into meetingHistory so the dept admin can
+// still see: how long the meeting actually ran, who joined (and their total time in
+// the call), and who was invited but never showed up.
 app.delete('/api/meetings/:id', requireLogin, requireRole('dept_admin'), (req, res) => {
   const meeting = db.get('meetings').find({ id: req.params.id }).value();
   if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
   if (meeting.createdBy !== req.currentUser.id) return res.status(403).json({ error: 'Not your meeting' });
 
+  const historyEntry = buildMeetingHistoryEntry(meeting);
+  db.get('meetingHistory').push(historyEntry).write();
+
+  db.get('attendance').remove({ meetingId: meeting.id }).write();
   db.get('meetings').remove({ id: req.params.id }).write();
-  res.json({ ok: true });
+  res.json({ ok: true, history: historyEntry });
+});
+
+// Dept admin: list history of meetings they deleted (their department), most recent first
+app.get('/api/meetings/history', requireLogin, requireRole('dept_admin'), (req, res) => {
+  const history = db.get('meetingHistory')
+    .filter({ departmentId: req.currentUser.departmentId })
+    .value()
+    .slice()
+    .sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+  res.json({ history });
 });
 
 // Get a single meeting — used by the meeting room page. Access allowed for:
@@ -578,6 +596,108 @@ app.get('/api/meetings/:id', requireLogin, (req, res) => {
 
   res.json({ meeting: enrichMeetings([meeting])[0] });
 });
+
+// ---------- Attendance tracking (used to build the deleted-meeting history) ----------
+function formatDuration(totalSeconds) {
+  const secs = Math.max(0, Math.round(totalSeconds || 0));
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const parts = [];
+  if (h) parts.push(`${h}h`);
+  if (m || h) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join(' ');
+}
+
+function recordAttendanceJoin(meetingId, userId, name, socketId) {
+  db.get('attendance').push({
+    id: uuidv4(),
+    meetingId,
+    userId,
+    name,
+    socketId,
+    joinedAt: new Date().toISOString(),
+    leftAt: null
+  }).write();
+}
+
+function recordAttendanceLeave(socketId) {
+  const session = db.get('attendance').find({ socketId, leftAt: null }).value();
+  if (!session) return;
+  db.get('attendance').find({ id: session.id }).assign({ leftAt: new Date().toISOString() }).write();
+}
+
+// Builds the snapshot stored in meetingHistory when a meeting is deleted, using
+// whatever attendance sessions were recorded (a still-open session for anyone still
+// connected is closed off "now" so their time in the meeting is still counted).
+function buildMeetingHistoryEntry(meeting) {
+  const now = new Date();
+  const users = db.get('users').value();
+  const depts = db.get('departments').value();
+  const sessions = db.get('attendance').filter({ meetingId: meeting.id }).value();
+
+  // Close any still-open session (participant connected when the meeting got deleted)
+  const normalized = sessions.map(s => ({
+    ...s,
+    leftAt: s.leftAt || now.toISOString()
+  }));
+
+  const byUser = {};
+  normalized.forEach(s => {
+    if (!byUser[s.userId]) byUser[s.userId] = [];
+    byUser[s.userId].push(s);
+  });
+
+  const joined = Object.keys(byUser).map(userId => {
+    const userSessions = byUser[userId];
+    const totalSeconds = userSessions.reduce((sum, s) => sum + (new Date(s.leftAt) - new Date(s.joinedAt)) / 1000, 0);
+    const u = users.find(x => x.id === userId);
+    return {
+      id: userId,
+      name: (u && u.name) || userSessions[0].name || 'Unknown',
+      email: u ? u.email : null,
+      totalSeconds: Math.round(totalSeconds),
+      totalFormatted: formatDuration(totalSeconds),
+      sessions: userSessions.map(s => ({ joinedAt: s.joinedAt, leftAt: s.leftAt }))
+    };
+  }).sort((a, b) => b.totalSeconds - a.totalSeconds);
+
+  const notJoined = meeting.participantIds
+    .filter(id => !byUser[id])
+    .map(id => {
+      const u = users.find(x => x.id === id);
+      return { id, name: u ? u.name : 'Unknown', email: u ? u.email : null };
+    });
+
+  // Overall meeting duration: span from the earliest join to the latest leave across
+  // everyone who attended. If nobody ever joined, duration is 0.
+  let durationSeconds = 0;
+  if (normalized.length > 0) {
+    const earliest = Math.min(...normalized.map(s => new Date(s.joinedAt).getTime()));
+    const latest = Math.max(...normalized.map(s => new Date(s.leftAt).getTime()));
+    durationSeconds = Math.round((latest - earliest) / 1000);
+  }
+
+  return {
+    id: uuidv4(),
+    meetingId: meeting.id,
+    title: meeting.title,
+    description: meeting.description,
+    date: meeting.date,
+    time: meeting.time,
+    departmentId: meeting.departmentId,
+    departmentName: (depts.find(d => d.id === meeting.departmentId) || {}).name || meeting.departmentId,
+    createdBy: meeting.createdBy,
+    createdByName: (users.find(u => u.id === meeting.createdBy) || {}).name || 'Unknown',
+    participantIds: meeting.participantIds,
+    durationSeconds,
+    durationFormatted: formatDuration(durationSeconds),
+    joined,
+    notJoined,
+    deletedAt: now.toISOString()
+  };
+}
 
 function enrichMeetings(meetings) {
   const users = db.get('users').value();
@@ -814,6 +934,10 @@ io.on('connection', (socket) => {
     socket.data.userId = user.id;
     socket.data.name = user.name;
 
+    // Track attendance so a full record survives even after the meeting is later
+    // deleted by its dept_admin (see buildMeetingHistoryEntry).
+    recordAttendanceJoin(meetingId, user.id, user.name, socket.id);
+
     // Tell the new socket who is already in the room
     const room = io.sockets.adapter.rooms.get(meetingId) || new Set();
     const existingUsers = Array.from(room).map(sid => {
@@ -1044,6 +1168,9 @@ io.on('connection', (socket) => {
       if (room !== socket.id) {
         socket.to(room).emit('user-left', { socketId: socket.id, userId: socket.data.userId, name: socket.data.name });
       }
+    }
+    if (socket.data.meetingId) {
+      recordAttendanceLeave(socket.id);
     }
     if (socket.data.meetingId) {
       const meetingId = socket.data.meetingId;

@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -58,6 +59,11 @@
       <h2>📋 My Department's Meetings</h2>
       <div id="meetingsList"><p class="empty-state">Loading...</p></div>
     </div>
+
+    <div class="card">
+      <h2>🗂️ Meeting History <span style="font-weight:normal; font-size:13px; color:var(--text-muted,#888);">(deleted meetings)</span></h2>
+      <div id="historyList"><p class="empty-state">Loading...</p></div>
+    </div>
   </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -74,6 +80,7 @@ async function init() {
 
   await loadEmployees();
   await loadMeetings();
+  await loadHistory();
 }
 
 async function loadEmployees() {
@@ -167,9 +174,53 @@ function resetForm() {
 }
 
 async function deleteMeeting(id) {
-  if (!confirm('Delete this meeting?')) return;
+  if (!confirm('Delete this meeting? Its attendance record will be moved to Meeting History.')) return;
   await apiDelete('/api/meetings/' + id);
   await loadMeetings();
+  await loadHistory();
+}
+
+async function loadHistory() {
+  const { history } = await apiGet('/api/meetings/history');
+  const el = document.getElementById('historyList');
+  if (history.length === 0) {
+    el.innerHTML = '<p class="empty-state">No deleted meetings yet.</p>';
+    return;
+  }
+
+  el.innerHTML = history.map((h, idx) => {
+    const joinedRows = h.joined.length
+      ? h.joined.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.email || '-')}</td><td>${escapeHtml(p.totalFormatted)}</td></tr>`).join('')
+      : `<tr><td colspan="3" class="empty-state">Nobody joined this meeting.</td></tr>`;
+    const notJoinedRows = h.notJoined.length
+      ? h.notJoined.map(p => `<li>${escapeHtml(p.name)} (${escapeHtml(p.email || '-')})</li>`).join('')
+      : `<li class="empty-state">Everyone invited joined.</li>`;
+
+    return `
+      <div class="history-entry" style="border:1px solid var(--border-color,#333); border-radius:8px; padding:14px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div>
+            <strong>${escapeHtml(h.title)}</strong>
+            <div style="font-size:13px; color:var(--text-muted,#888);">Scheduled: ${h.date} ${h.time} &middot; Deleted: ${new Date(h.deletedAt).toLocaleString()}</div>
+          </div>
+          <div style="font-size:13px;"><strong>Actual duration:</strong> ${escapeHtml(h.durationFormatted)}</div>
+        </div>
+        ${h.description ? `<p style="margin:8px 0; font-size:14px;">${escapeHtml(h.description)}</p>` : ''}
+        <div class="grid-2" style="margin-top:10px; gap:16px;">
+          <div>
+            <h4 style="margin:0 0 6px;">✅ Joined (${h.joined.length})</h4>
+            <table><thead><tr><th>Name</th><th>Email</th><th>Time in meeting</th></tr></thead>
+              <tbody>${joinedRows}</tbody>
+            </table>
+          </div>
+          <div>
+            <h4 style="margin:0 0 6px;">❌ Invited but did not join (${h.notJoined.length})</h4>
+            <ul style="margin:0; padding-left:18px;">${notJoinedRows}</ul>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 document.getElementById('meetingForm').addEventListener('submit', async (e) => {
