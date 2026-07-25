@@ -57,6 +57,7 @@
     </div>
   </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
 let employees = [];
@@ -65,6 +66,7 @@ async function init() {
   initThemeToggle('.topbar-actions');
   const user = await requireAuth('dept_admin');
   if (!user) return;
+  initMessagesBadge(user);
   document.getElementById('pageTitle').innerHTML = `${escapeHtml(user.name)}'s Dashboard <span class="role-badge">DEPT ADMIN</span>`;
 
   await loadEmployees();

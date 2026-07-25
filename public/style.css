@@ -97,6 +97,27 @@ body {
 .btn-danger { background: #ef4444; color: #fff; }
 .btn-danger:hover { background: #dc2626; }
 .btn-secondary { background: var(--btn-secondary-bg); color: var(--btn-secondary-text); }
+
+/* Unread-messages notification badge on the "💬 Messages" nav button */
+.messages-link { position: relative; }
+.messages-badge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--card-bg, #fff);
+}
 .btn-secondary:hover { background: var(--btn-secondary-hover); }
 
 .container { max-width: 1100px; margin: 0 auto; padding: 24px; }

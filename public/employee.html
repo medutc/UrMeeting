@@ -27,12 +27,14 @@
     </div>
   </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
 async function init() {
   initThemeToggle('.topbar-actions');
   const user = await requireAuth('employee');
   if (!user) return;
+  initMessagesBadge(user);
   document.getElementById('pageTitle').innerHTML = `${escapeHtml(user.name)}'s Dashboard <span class="role-badge">EMPLOYEE</span>`;
 
   const { meetings } = await apiGet('/api/meetings/mine');

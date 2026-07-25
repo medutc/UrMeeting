@@ -114,3 +114,56 @@ function initThemeToggle(containerSelector) {
   container.prepend(btn);
   updateThemeToggleIcons();
 }
+
+// ============================================================
+// Unread-messages notification badge on the "💬 Messages" nav
+// button, shared by employee.html / deptadmin.html / superadmin.html.
+// Wraps the existing <a href="/messages.html"> link with a small
+// red counter that reflects the total unread count across every
+// conversation, and updates live via socket.io when a new direct
+// message arrives while the user is on a dashboard page.
+// ============================================================
+function initMessagesBadge(currentUser) {
+  const link = document.querySelector('a[href="/messages.html"]');
+  if (!link || !currentUser) return;
+
+  link.classList.add('messages-link');
+  let badge = link.querySelector('.messages-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'messages-badge';
+    badge.id = 'messagesBadge';
+    badge.style.display = 'none';
+    link.appendChild(badge);
+  }
+
+  function setCount(count) {
+    if (count > 0) {
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  async function refreshUnreadCount() {
+    try {
+      const { conversations } = await apiGet('/api/messages/conversations');
+      const total = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+      setCount(total);
+    } catch (e) {
+      // Ignore transient errors (e.g. session hiccup); badge just stays as-is.
+    }
+  }
+
+  refreshUnreadCount();
+
+  if (typeof io === 'function') {
+    const socket = io();
+    socket.on('connect', () => socket.emit('register', { userId: currentUser.id }));
+    // A new message arrived for us while we're on a dashboard page (not the
+    // messages page itself) — refresh the total unread count.
+    socket.on('direct-message', refreshUnreadCount);
+    socket.on('message-deleted', refreshUnreadCount);
+  }
+}
