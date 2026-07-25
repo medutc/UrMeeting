@@ -902,7 +902,15 @@ function connectSocket() {
 
   socket.on('signal', async ({ from, name, data }) => {
     let entry = peers[from];
-    if (!entry) entry = createPeerConnection(from, name, false);
+    if (!entry) {
+      entry = createPeerConnection(from, name, false);
+      // A brand-new peer connection was just created for this remote user
+      // (this is the first time we've heard from them via signaling) --
+      // refresh the on-screen participant count/list so it doesn't stay
+      // stuck at the old number for people who were already in the room.
+      updateParticipantCount();
+      updateParticipantsList();
+    }
 
     if (data.type === 'offer') {
       await entry.pc.setRemoteDescription(new RTCSessionDescription(data));
