@@ -161,6 +161,8 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   font-size: 12px;
 }
 .pinned-bar.visible { display: flex; }
+.pinned-bar { cursor: pointer; }
+.pinned-bar:hover { background: #1e3a8a; }
 .pinned-bar .pin-icon { font-size: 14px; flex-shrink: 0; }
 .pinned-bar .pinned-content { flex: 1; min-width: 0; }
 .pinned-bar .pinned-label { color: #93c5fd; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
@@ -183,6 +185,17 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
 }
 .chat-msg:hover .pin-msg-btn { display: inline-block; }
 .chat-msg .pin-msg-btn:hover { background: #475569; }
+.poll-pin-btn { margin-left: auto; }
+
+@keyframes pinHighlightFlash {
+  0% { background: rgba(59,130,246,0.35); }
+  100% { background: transparent; }
+}
+.chat-msg.highlight-flash,
+.chat-msg.highlight-flash .poll-card {
+  animation: pinHighlightFlash 1.6s ease-out;
+  border-radius: 8px;
+}
 
 .chat-input-row { display: flex; padding: 10px; gap: 8px; border-top: 1px solid #334155; }
 .chat-input-row input {

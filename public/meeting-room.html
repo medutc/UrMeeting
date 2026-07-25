@@ -811,6 +811,10 @@ function joinMeeting() {
     if (event.target === event.currentTarget) closePollComposer();
   });
   document.getElementById('unpinBtn').addEventListener('click', unpinMessage);
+  document.getElementById('pinnedBar').addEventListener('click', (e) => {
+    if (e.target.closest('#unpinBtn')) return;
+    scrollToPinnedMessage();
+  });
 
   document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenMode);
   
@@ -1649,7 +1653,13 @@ function pinMessage(id) {
   if (!isAdmin) return;
   const message = chatMessagesById[id];
   if (!message) return;
-  socket.emit('pin-message', { meetingId, message });
+  socket.emit('pin-message', { meetingId, message: { ...message, type: 'text' } });
+}
+
+function pinPoll(pollId) {
+  if (!isAdmin) return;
+  if (!activePolls[pollId]) return;
+  socket.emit('pin-message', { meetingId, message: { type: 'poll', pollId } });
 }
 
 function unpinMessage() {
@@ -1657,8 +1667,13 @@ function unpinMessage() {
   socket.emit('unpin-message', { meetingId });
 }
 
+let currentPinnedId = null;
 function showPinnedBar(message) {
   const bar = document.getElementById('pinnedBar');
+  currentPinnedId = message.id;
+  const isPoll = message.type === 'poll';
+  document.querySelector('#pinnedBar .pin-icon').textContent = isPoll ? '📊' : '📌';
+  document.querySelector('#pinnedBar .pinned-label').textContent = isPoll ? 'Pinned poll' : 'Pinned message';
   document.getElementById('pinnedWho').textContent = (message.name || 'Unknown') + ': ';
   document.getElementById('pinnedText').textContent = message.text || '';
   document.getElementById('unpinBtn').style.display = isAdmin ? 'block' : 'none';
@@ -1667,6 +1682,19 @@ function showPinnedBar(message) {
 
 function hidePinnedBar() {
   document.getElementById('pinnedBar').classList.remove('visible');
+  currentPinnedId = null;
+}
+
+// Clicking the pinned bar (but not the unpin button) jumps to and briefly
+// highlights the original message/poll card down in the chat log.
+function scrollToPinnedMessage() {
+  if (!currentPinnedId) return;
+  const box = document.getElementById('chatMessages');
+  let target = box.querySelector(`[data-msg-id="${currentPinnedId}"]`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('highlight-flash');
+  setTimeout(() => target.classList.remove('highlight-flash'), 1600);
 }
 
 // ============================================================
@@ -1743,6 +1771,7 @@ function renderOrUpdatePoll(poll) {
     const box = document.getElementById('chatMessages');
     const wrapper = document.createElement('div');
     wrapper.className = 'chat-msg';
+    wrapper.dataset.msgId = poll.id;
     const card = document.createElement('div');
     card.className = 'poll-card';
     wrapper.innerHTML = `<span class="who">${escapeHtml(poll.createdByName || 'Unknown')}</span><span class="when">${new Date(poll.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
@@ -1773,8 +1802,12 @@ function paintPollCard(card, poll) {
       </div>`;
   }).join('');
 
+  const pinBtnHtml = isAdmin
+    ? `<button type="button" class="pin-msg-btn poll-pin-btn" onclick="pinPoll('${poll.id}')">📌 Pin</button>`
+    : '';
+
   card.innerHTML = `
-    <div class="poll-title-row"><span class="poll-icon">📊</span><span class="poll-question">${escapeHtml(poll.question)}</span></div>
+    <div class="poll-title-row"><span class="poll-icon">📊</span><span class="poll-question">${escapeHtml(poll.question)}</span>${pinBtnHtml}</div>
     <div class="poll-meta">${poll.allowMultiple ? 'Select one or more' : 'Select one'} · by ${escapeHtml(poll.createdByName || 'Unknown')}</div>
     ${optionsHtml}
     <div class="poll-total-votes">${totalVotes} vote${totalVotes === 1 ? '' : 's'}</div>
