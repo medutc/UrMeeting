@@ -35,6 +35,9 @@
           <label>Time</label>
           <input type="time" id="time" required>
           <label>Invite Employees</label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight:600; margin-bottom:6px;">
+            <input type="checkbox" id="selectAllEmployeesCheckbox"> Invite all department employees
+          </label>
           <div class="checkbox-list" id="employeeCheckboxes"></div>
           <div style="margin-top:14px; display:flex; gap:8px;">
             <button class="btn btn-primary" type="submit" id="submitBtn">Create Meeting</button>
@@ -78,13 +81,30 @@ async function loadEmployees() {
   employees = emps;
 
   const cbEl = document.getElementById('employeeCheckboxes');
+  const selectAllEl = document.getElementById('selectAllEmployeesCheckbox');
   if (employees.length === 0) {
     cbEl.innerHTML = '<p class="empty-state">No employees yet. Ask the Super Admin to create some.</p>';
+    selectAllEl.checked = false;
+    selectAllEl.disabled = true;
   } else {
     cbEl.innerHTML = employees.map(e => `
       <label><input type="checkbox" value="${e.id}" class="empCheckbox"> ${escapeHtml(e.name)} (${escapeHtml(e.email)})</label>
     `).join('');
+    selectAllEl.disabled = false;
+    selectAllEl.checked = false;
   }
+
+  // "Invite all" toggles every individual checkbox; if the admin later
+  // unchecks any one employee manually, the "select all" box un-ticks itself.
+  selectAllEl.onchange = () => {
+    document.querySelectorAll('.empCheckbox').forEach(cb => { cb.checked = selectAllEl.checked; });
+  };
+  cbEl.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('empCheckbox')) return;
+    const all = document.querySelectorAll('.empCheckbox');
+    const allChecked = Array.from(all).every(cb => cb.checked);
+    selectAllEl.checked = allChecked && all.length > 0;
+  });
 
   const listEl = document.getElementById('employeesList');
   listEl.innerHTML = employees.length === 0
@@ -128,9 +148,12 @@ function editMeeting(m) {
   document.getElementById('description').value = m.description;
   document.getElementById('date').value = m.date;
   document.getElementById('time').value = m.time;
-  document.querySelectorAll('.empCheckbox').forEach(cb => {
+  const empCheckboxes = document.querySelectorAll('.empCheckbox');
+  empCheckboxes.forEach(cb => {
     cb.checked = m.participantIds.includes(cb.value);
   });
+  const selectAllEl = document.getElementById('selectAllEmployeesCheckbox');
+  selectAllEl.checked = empCheckboxes.length > 0 && Array.from(empCheckboxes).every(cb => cb.checked);
   window.scrollTo(0, 0);
 }
 
@@ -140,6 +163,7 @@ function resetForm() {
   document.getElementById('cancelEditBtn').style.display = 'none';
   document.getElementById('meetingForm').reset();
   document.getElementById('meetingId').value = '';
+  document.getElementById('selectAllEmployeesCheckbox').checked = false;
 }
 
 async function deleteMeeting(id) {
