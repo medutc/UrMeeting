@@ -143,12 +143,47 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   flex-shrink: 0;
 }
 .chat-panel.hidden { display: none; }
-.chat-header { padding: 12px 16px; border-bottom: 1px solid #334155; font-weight: 600; font-size: 14px; }
+.chat-header { padding: 12px 16px; border-bottom: 1px solid #334155; font-weight: 600; font-size: 14px; display: flex; align-items: center; justify-content: space-between; }
+.chat-header .poll-btn {
+  background: #334155; color: #e5e7eb; border: none; border-radius: 6px;
+  padding: 5px 10px; font-size: 12px; cursor: pointer; font-weight: 600;
+}
+.chat-header .poll-btn:hover { background: #475569; }
+
+/* Pinned message bar */
+.pinned-bar {
+  display: none;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #172554;
+  border-bottom: 1px solid #334155;
+  font-size: 12px;
+}
+.pinned-bar.visible { display: flex; }
+.pinned-bar .pin-icon { font-size: 14px; flex-shrink: 0; }
+.pinned-bar .pinned-content { flex: 1; min-width: 0; }
+.pinned-bar .pinned-label { color: #93c5fd; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.pinned-bar .pinned-who { color: #cbd5e1; font-weight: 600; margin-right: 4px; }
+.pinned-bar .pinned-text { color: #e5e7eb; word-wrap: break-word; }
+.pinned-bar .unpin-btn {
+  background: transparent; border: none; color: #94a3b8; cursor: pointer; font-size: 14px; flex-shrink: 0;
+}
+.pinned-bar .unpin-btn:hover { color: #f87171; }
+
 .chat-messages { flex: 1; overflow-y: auto; padding: 10px 16px; }
-.chat-msg { margin-bottom: 12px; }
+.chat-msg { margin-bottom: 12px; position: relative; }
 .chat-msg .who { font-size: 12px; font-weight: 700; color: #93c5fd; }
 .chat-msg .when { font-size: 10px; color: #6b7280; margin-left: 6px; }
 .chat-msg .text { font-size: 14px; margin-top: 2px; word-wrap: break-word; }
+.chat-msg .pin-msg-btn {
+  display: none;
+  background: #334155; color: #e5e7eb; border: none; border-radius: 4px;
+  font-size: 10px; padding: 2px 6px; cursor: pointer; margin-left: 6px; vertical-align: middle;
+}
+.chat-msg:hover .pin-msg-btn { display: inline-block; }
+.chat-msg .pin-msg-btn:hover { background: #475569; }
+
 .chat-input-row { display: flex; padding: 10px; gap: 8px; border-top: 1px solid #334155; }
 .chat-input-row input {
   flex: 1;
@@ -168,6 +203,67 @@ html, body { height: 100%; margin: 0; background: #111827; color: #f3f4f6; font-
   cursor: pointer;
   font-weight: 600;
 }
+
+/* ---- Poll composer popover ---- */
+.poll-composer-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+}
+.poll-composer-backdrop[hidden] { display: none; }
+.poll-composer {
+  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  padding: 18px; width: 340px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.poll-composer h3 { margin: 0 0 12px 0; font-size: 15px; color: #f3f4f6; }
+.poll-composer label { display: block; font-size: 12px; color: #94a3b8; margin: 10px 0 4px; }
+.poll-composer input[type="text"] {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid #334155; background: #0f172a; color: #f3f4f6; font-size: 13px;
+}
+.poll-option-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.poll-option-row input { flex: 1; }
+.poll-option-row .remove-option-btn {
+  background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 16px; flex-shrink: 0;
+}
+.poll-add-option-btn {
+  background: none; border: 1px dashed #475569; color: #93c5fd; border-radius: 6px;
+  padding: 6px 10px; font-size: 12px; cursor: pointer; margin-top: 4px; width: 100%;
+}
+.poll-add-option-btn:hover { background: #273449; }
+.poll-multiple-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: #cbd5e1; }
+.poll-composer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.poll-composer-actions button {
+  padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.poll-composer-actions .cancel-btn { background: #334155; color: #e5e7eb; }
+.poll-composer-actions .create-btn { background: #3b82f6; color: #fff; }
+.poll-error { color: #f87171; font-size: 12px; margin-top: 8px; min-height: 14px; }
+
+/* ---- Poll card in chat ---- */
+.poll-card {
+  background: #0f172a; border: 1px solid #334155; border-radius: 10px;
+  padding: 10px 12px; margin-top: 4px;
+}
+.poll-card .poll-title-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.poll-card .poll-icon { font-size: 14px; }
+.poll-card .poll-question { font-size: 13px; font-weight: 700; color: #f3f4f6; }
+.poll-card .poll-meta { font-size: 10px; color: #6b7280; margin-bottom: 8px; }
+.poll-option {
+  border: 1px solid #334155; border-radius: 8px; padding: 6px 8px; margin-bottom: 6px;
+  cursor: pointer; position: relative; overflow: hidden; background: #1e293b;
+}
+.poll-option:hover { border-color: #475569; }
+.poll-option.voted { border-color: #3b82f6; }
+.poll-option .poll-option-fill {
+  position: absolute; top: 0; left: 0; bottom: 0; background: rgba(59,130,246,0.18); z-index: 0;
+  transition: width 0.3s ease;
+}
+.poll-option .poll-option-content { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 8px; }
+.poll-option .poll-option-text { font-size: 13px; color: #e5e7eb; }
+.poll-option .poll-option-text .check { margin-right: 4px; color: #60a5fa; }
+.poll-option .poll-option-pct { font-size: 12px; color: #93c5fd; font-weight: 700; white-space: nowrap; }
+.poll-card .poll-total-votes { font-size: 11px; color: #6b7280; margin-top: 4px; }
 
 .controls-bar {
   flex-shrink: 0;

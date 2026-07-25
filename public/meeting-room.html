@@ -57,11 +57,43 @@
         <div class="center-msg" id="centerMsg">Connecting...</div>
       </div>
       <div class="chat-panel" id="chatPanel">
-        <div class="chat-header">💬 Meeting Chat</div>
+        <div class="chat-header">
+          <span>💬 Meeting Chat</span>
+          <button type="button" class="poll-btn" id="openPollBtn" title="Create a poll">📊 Poll</button>
+        </div>
+        <div class="pinned-bar" id="pinnedBar">
+          <span class="pin-icon">📌</span>
+          <div class="pinned-content">
+            <div class="pinned-label">Pinned message</div>
+            <div><span class="pinned-who" id="pinnedWho"></span><span class="pinned-text" id="pinnedText"></span></div>
+          </div>
+          <button type="button" class="unpin-btn" id="unpinBtn" title="Unpin message" style="display:none;">✕</button>
+        </div>
         <div class="chat-messages" id="chatMessages"></div>
         <div class="chat-input-row">
           <input type="text" id="chatInput" placeholder="Type a message..." maxlength="2000">
           <button onclick="sendChat()">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- POLL COMPOSER -->
+    <div class="poll-composer-backdrop" id="pollComposerBackdrop" hidden>
+      <div class="poll-composer" role="dialog" aria-modal="true" aria-labelledby="pollComposerTitle">
+        <h3 id="pollComposerTitle">📊 Create a poll</h3>
+        <label for="pollQuestionInput">Question</label>
+        <input type="text" id="pollQuestionInput" placeholder="Ask a question..." maxlength="300">
+        <label>Options</label>
+        <div id="pollOptionsList"></div>
+        <button type="button" class="poll-add-option-btn" id="pollAddOptionBtn">+ Add option</button>
+        <div class="poll-multiple-row">
+          <input type="checkbox" id="pollAllowMultiple">
+          <label for="pollAllowMultiple" style="margin:0;">Allow multiple answers</label>
+        </div>
+        <div class="poll-error" id="pollError"></div>
+        <div class="poll-composer-actions">
+          <button type="button" class="cancel-btn" id="pollCancelBtn">Cancel</button>
+          <button type="button" class="create-btn" id="pollCreateBtn">Create poll</button>
         </div>
       </div>
     </div>
@@ -771,6 +803,15 @@ function joinMeeting() {
     if (e.key === 'Enter') sendChat();
   });
 
+  document.getElementById('openPollBtn').addEventListener('click', openPollComposer);
+  document.getElementById('pollCancelBtn').addEventListener('click', closePollComposer);
+  document.getElementById('pollAddOptionBtn').addEventListener('click', () => addPollOptionField());
+  document.getElementById('pollCreateBtn').addEventListener('click', submitPoll);
+  document.getElementById('pollComposerBackdrop').addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closePollComposer();
+  });
+  document.getElementById('unpinBtn').addEventListener('click', unpinMessage);
+
   document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenMode);
   
   document.addEventListener('keydown', (e) => {
@@ -942,7 +983,27 @@ function connectSocket() {
   });
 
   socket.on('chat-message', (msg) => {
-    addChatLine(msg.name, msg.text, msg.time, msg.from === currentUser.id);
+    addChatLine(msg.id, msg.name, msg.text, msg.time, msg.from, msg.from === currentUser.id);
+  });
+
+  socket.on('existing-polls', (polls) => {
+    polls.forEach(poll => renderOrUpdatePoll(poll));
+  });
+
+  socket.on('poll-created', (poll) => {
+    renderOrUpdatePoll(poll);
+  });
+
+  socket.on('poll-updated', (poll) => {
+    renderOrUpdatePoll(poll);
+  });
+
+  socket.on('message-pinned', (message) => {
+    showPinnedBar(message);
+  });
+
+  socket.on('message-unpinned', () => {
+    hidePinnedBar();
   });
 
   socket.on('screen-share-changed', ({ socketId, name, sharing }) => {
@@ -1546,16 +1607,30 @@ function sendChat() {
   input.value = '';
 }
 
-function addChatLine(name, text, time, isMe) {
+// Keep a small lookup of recently seen chat messages so the admin "pin" button
+// can send the full message payload (server re-validates permissions anyway).
+const chatMessagesById = {};
+
+function addChatLine(id, name, text, time, fromId, isMe) {
   const box = document.getElementById('chatMessages');
   const div = document.createElement('div');
   div.className = 'chat-msg';
+  if (id) div.dataset.msgId = id;
   const t = new Date(time);
   const timeStr = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  div.innerHTML = `<span class="who">${escapeHtml(isMe ? 'You' : name)}</span><span class="when">${timeStr}</span>
+
+  const pinBtnHtml = (id && isAdmin)
+    ? `<button type="button" class="pin-msg-btn" onclick="pinMessage('${id}')">📌 Pin</button>`
+    : '';
+
+  div.innerHTML = `<span class="who">${escapeHtml(isMe ? 'You' : name)}</span><span class="when">${timeStr}</span>${pinBtnHtml}
     <div class="text">${escapeHtml(text)}</div>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+
+  if (id) {
+    chatMessagesById[id] = { id, name, text, time, from: fromId };
+  }
 }
 
 function addSystemChatLine(text) {
@@ -1565,6 +1640,145 @@ function addSystemChatLine(text) {
   div.innerHTML = `<div class="text" style="color:#9ca3af; font-style:italic;">${escapeHtml(text)}</div>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+}
+
+// ============================================================
+// PINNED MESSAGE (admin only can pin/unpin; everyone sees the pinned bar)
+// ============================================================
+function pinMessage(id) {
+  if (!isAdmin) return;
+  const message = chatMessagesById[id];
+  if (!message) return;
+  socket.emit('pin-message', { meetingId, message });
+}
+
+function unpinMessage() {
+  if (!isAdmin) return;
+  socket.emit('unpin-message', { meetingId });
+}
+
+function showPinnedBar(message) {
+  const bar = document.getElementById('pinnedBar');
+  document.getElementById('pinnedWho').textContent = (message.name || 'Unknown') + ': ';
+  document.getElementById('pinnedText').textContent = message.text || '';
+  document.getElementById('unpinBtn').style.display = isAdmin ? 'block' : 'none';
+  bar.classList.add('visible');
+}
+
+function hidePinnedBar() {
+  document.getElementById('pinnedBar').classList.remove('visible');
+}
+
+// ============================================================
+// POLLS (WhatsApp-style — anyone can create/vote)
+// ============================================================
+const activePolls = {}; // pollId -> { poll, cardEl }
+let pollOptionCount = 0;
+
+function openPollComposer() {
+  document.getElementById('pollError').textContent = '';
+  document.getElementById('pollQuestionInput').value = '';
+  document.getElementById('pollAllowMultiple').checked = false;
+  const list = document.getElementById('pollOptionsList');
+  list.innerHTML = '';
+  pollOptionCount = 0;
+  addPollOptionField();
+  addPollOptionField();
+  document.getElementById('pollComposerBackdrop').hidden = false;
+  document.getElementById('pollQuestionInput').focus();
+}
+
+function closePollComposer() {
+  document.getElementById('pollComposerBackdrop').hidden = true;
+}
+
+function addPollOptionField(value = '') {
+  const list = document.getElementById('pollOptionsList');
+  if (list.children.length >= 6) return;
+  pollOptionCount++;
+  const row = document.createElement('div');
+  row.className = 'poll-option-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 120;
+  input.placeholder = `Option ${list.children.length + 1}`;
+  input.value = value;
+  input.className = 'poll-option-input';
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'remove-option-btn';
+  removeBtn.title = 'Remove option';
+  removeBtn.textContent = '✕';
+  removeBtn.addEventListener('click', () => {
+    if (list.children.length > 2) row.remove();
+  });
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  list.appendChild(row);
+}
+
+function submitPoll() {
+  const question = document.getElementById('pollQuestionInput').value.trim();
+  const errorEl = document.getElementById('pollError');
+  const optionInputs = Array.from(document.querySelectorAll('.poll-option-input'));
+  const options = optionInputs.map(i => i.value.trim()).filter(Boolean);
+  const uniqueOptions = [...new Set(options)];
+  const allowMultiple = document.getElementById('pollAllowMultiple').checked;
+
+  if (!question) { errorEl.textContent = 'Please enter a question.'; return; }
+  if (uniqueOptions.length < 2) { errorEl.textContent = 'Please enter at least 2 unique options.'; return; }
+  if (uniqueOptions.length > 6) { errorEl.textContent = 'A poll can have at most 6 options.'; return; }
+
+  socket.emit('create-poll', { meetingId, question, options: uniqueOptions, allowMultiple });
+  closePollComposer();
+}
+
+function votePollOption(pollId, optionId) {
+  socket.emit('vote-poll', { meetingId, pollId, optionId });
+}
+
+function renderOrUpdatePoll(poll) {
+  let entry = activePolls[poll.id];
+  if (!entry) {
+    const box = document.getElementById('chatMessages');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat-msg';
+    const card = document.createElement('div');
+    card.className = 'poll-card';
+    wrapper.innerHTML = `<span class="who">${escapeHtml(poll.createdByName || 'Unknown')}</span><span class="when">${new Date(poll.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+    wrapper.appendChild(card);
+    box.appendChild(wrapper);
+    entry = { poll, cardEl: card };
+    activePolls[poll.id] = entry;
+    box.scrollTop = box.scrollHeight;
+  }
+  entry.poll = poll;
+  paintPollCard(entry.cardEl, poll);
+}
+
+function paintPollCard(card, poll) {
+  const totalVotes = poll.options.reduce((sum, o) => sum + o.votes.length, 0);
+  const myVotes = new Set(poll.options.filter(o => o.votes.includes(currentUser.id)).map(o => o.id));
+
+  const optionsHtml = poll.options.map(o => {
+    const pct = totalVotes ? Math.round((o.votes.length / totalVotes) * 100) : 0;
+    const voted = myVotes.has(o.id);
+    return `
+      <div class="poll-option${voted ? ' voted' : ''}" onclick="votePollOption('${poll.id}', '${o.id}')">
+        <div class="poll-option-fill" style="width:${pct}%;"></div>
+        <div class="poll-option-content">
+          <span class="poll-option-text">${voted ? '<span class="check">✔</span>' : ''}${escapeHtml(o.text)}</span>
+          <span class="poll-option-pct">${pct}% (${o.votes.length})</span>
+        </div>
+      </div>`;
+  }).join('');
+
+  card.innerHTML = `
+    <div class="poll-title-row"><span class="poll-icon">📊</span><span class="poll-question">${escapeHtml(poll.question)}</span></div>
+    <div class="poll-meta">${poll.allowMultiple ? 'Select one or more' : 'Select one'} · by ${escapeHtml(poll.createdByName || 'Unknown')}</div>
+    ${optionsHtml}
+    <div class="poll-total-votes">${totalVotes} vote${totalVotes === 1 ? '' : 's'}</div>
+  `;
 }
 
 // ============================================================

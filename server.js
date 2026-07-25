@@ -761,6 +761,25 @@ function sendModerationError(socket, message) {
   socket.emit('moderation-error', message);
 }
 
+// ---------- In-meeting chat extras: polls + pinned message ----------
+// These live only in memory (mirroring the existing chat, which is not persisted
+// to db.json either) and are keyed by meetingId so late joiners can be caught up.
+const meetingPolls = {};   // meetingId -> { pollId -> poll }
+const meetingPinned = {};  // meetingId -> pinned message object
+
+function getPollsForMeeting(meetingId) {
+  if (!meetingPolls[meetingId]) meetingPolls[meetingId] = {};
+  return meetingPolls[meetingId];
+}
+
+function cleanupMeetingChatState(meetingId) {
+  const room = io.sockets.adapter.rooms.get(meetingId);
+  if (!room || room.size === 0) {
+    delete meetingPolls[meetingId];
+    delete meetingPinned[meetingId];
+  }
+}
+
 function getModerationTargets(socket, meetingId, targetSocketId) {
   const room = io.sockets.adapter.rooms.get(meetingId);
   if (!room) return [];
@@ -811,6 +830,12 @@ io.on('connection', (socket) => {
     });
     socket.emit('existing-users', existingUsers);
 
+    // Catch the joining socket up on any active polls and the currently pinned message
+    socket.emit('existing-polls', Object.values(getPollsForMeeting(meetingId)));
+    if (meetingPinned[meetingId]) {
+      socket.emit('message-pinned', meetingPinned[meetingId]);
+    }
+
     socket.join(meetingId);
     socket.to(meetingId).emit('user-joined', {
       socketId: socket.id,
@@ -833,11 +858,91 @@ io.on('connection', (socket) => {
   socket.on('chat-message', ({ meetingId, text }) => {
     if (!meetingId || socket.data.meetingId !== meetingId || !text) return;
     io.to(meetingId).emit('chat-message', {
+      id: uuidv4(),
       from: socket.data.userId,
       name: socket.data.name || 'Unknown',
       text: String(text).slice(0, 2000),
       time: new Date().toISOString()
     });
+  });
+
+  // ---- Polls (WhatsApp-style) — any participant can create/vote ----
+  socket.on('create-poll', ({ meetingId, question, options, allowMultiple }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    const cleanQuestion = String(question || '').trim().slice(0, 300);
+    if (!cleanQuestion) return sendModerationError(socket, 'A poll needs a question.');
+
+    const cleanOptions = Array.isArray(options)
+      ? options.map(o => String(o || '').trim().slice(0, 120)).filter(Boolean)
+      : [];
+    const uniqueOptions = [...new Set(cleanOptions)];
+    if (uniqueOptions.length < 2 || uniqueOptions.length > 6) {
+      return sendModerationError(socket, 'A poll needs between 2 and 6 unique options.');
+    }
+
+    const poll = {
+      id: uuidv4(),
+      meetingId,
+      question: cleanQuestion,
+      allowMultiple: !!allowMultiple,
+      createdBy: socket.data.userId,
+      createdByName: socket.data.name || 'Unknown',
+      createdAt: new Date().toISOString(),
+      options: uniqueOptions.map(text => ({ id: uuidv4(), text, votes: [] }))
+    };
+
+    getPollsForMeeting(meetingId)[poll.id] = poll;
+    io.to(meetingId).emit('poll-created', poll);
+  });
+
+  socket.on('vote-poll', ({ meetingId, pollId, optionId }) => {
+    if (!meetingId || socket.data.meetingId !== meetingId) return;
+    const poll = getPollsForMeeting(meetingId)[pollId];
+    if (!poll) return sendModerationError(socket, 'This poll no longer exists.');
+    const option = poll.options.find(o => o.id === optionId);
+    if (!option) return sendModerationError(socket, 'That poll option no longer exists.');
+
+    const userId = socket.data.userId;
+    const alreadyVoted = option.votes.includes(userId);
+
+    if (!poll.allowMultiple) {
+      // Single-choice: clear this user's vote from every option first.
+      poll.options.forEach(o => { o.votes = o.votes.filter(v => v !== userId); });
+    } else {
+      option.votes = option.votes.filter(v => v !== userId);
+    }
+
+    if (!alreadyVoted) {
+      option.votes.push(userId);
+    }
+
+    io.to(meetingId).emit('poll-updated', poll);
+  });
+
+  // ---- Pinned message (meeting owner only) ----
+  socket.on('pin-message', ({ meetingId, message }) => {
+    if (!isMeetingOwner(socket, meetingId)) {
+      return sendModerationError(socket, 'Only this meeting’s owner can pin messages.');
+    }
+    if (!message || !message.text) return;
+    const pinned = {
+      id: message.id || uuidv4(),
+      from: message.from,
+      name: message.name || 'Unknown',
+      text: String(message.text).slice(0, 2000),
+      time: message.time || new Date().toISOString(),
+      pinnedBy: socket.data.name || 'Meeting owner'
+    };
+    meetingPinned[meetingId] = pinned;
+    io.to(meetingId).emit('message-pinned', pinned);
+  });
+
+  socket.on('unpin-message', ({ meetingId }) => {
+    if (!isMeetingOwner(socket, meetingId)) {
+      return sendModerationError(socket, 'Only this meeting’s owner can unpin messages.');
+    }
+    delete meetingPinned[meetingId];
+    io.to(meetingId).emit('message-unpinned');
   });
 
   // ---- Screen sharing presence (actual media swap happens peer-to-peer via renegotiation;
@@ -938,6 +1043,15 @@ io.on('connection', (socket) => {
     for (const room of socket.rooms) {
       if (room !== socket.id) {
         socket.to(room).emit('user-left', { socketId: socket.id, userId: socket.data.userId, name: socket.data.name });
+      }
+    }
+    if (socket.data.meetingId) {
+      const meetingId = socket.data.meetingId;
+      // Room membership hasn't been updated yet during 'disconnecting', so a room
+      // size of 1 here means this socket is the last one still present.
+      const room = io.sockets.adapter.rooms.get(meetingId);
+      if (!room || room.size <= 1) {
+        setImmediate(() => cleanupMeetingChatState(meetingId));
       }
     }
   });
