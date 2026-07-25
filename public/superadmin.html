@@ -58,6 +58,7 @@
     </div>
   </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
 let departments = [];
@@ -66,6 +67,7 @@ async function init() {
   initThemeToggle('.topbar-actions');
   const user = await requireAuth('superadmin');
   if (!user) return;
+  initMessagesBadge(user);
 
   const dRes = await apiGet('/api/departments');
   departments = dRes.departments;
