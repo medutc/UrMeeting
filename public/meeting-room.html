@@ -43,6 +43,11 @@
         <div class="sub" id="meetingSub"></div>
       </div>
       <div class="header-right">
+        <!-- THEME TOGGLE -->
+        <button class="ctrl-btn theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">
+          <span class="theme-icon-dark" aria-hidden="true">☀️</span>
+          <span class="theme-icon-light" aria-hidden="true">🌙</span>
+        </button>
         <!-- FULLSCREEN BUTTON -->
         <button class="ctrl-btn" id="fullscreenBtn" title="Toggle fullscreen video area">⛶</button>
         
@@ -173,6 +178,17 @@ const params = new URLSearchParams(window.location.search);
 const meetingId = params.get('id');
 if (!meetingId) window.location.href = '/index.html';
 
+// Apply saved theme before anything renders so the lobby is themed too.
+(function bootstrapTheme() {
+  let saved = 'dark';
+  try {
+    const v = localStorage.getItem('urmeeting.theme');
+    if (v === 'light' || v === 'dark') saved = v;
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) saved = 'light';
+  } catch (_) { /* ignore */ }
+  document.body.classList.toggle('theme-light', saved === 'light');
+})();
+
 let currentUser = null;
 let meeting = null;
 let socket = null;
@@ -190,6 +206,10 @@ let preScreenShareTrack = null;
 // FULLSCREEN STATE
 let isFullscreenMode = false;
 let fullscreenTileId = null;
+
+// THEME STATE (light/dark)
+const THEME_STORAGE_KEY = 'urmeeting.theme';
+let currentTheme = 'dark';
 
 // ADMIN STATE
 let isAdmin = false;
@@ -406,79 +426,221 @@ function playUserLeftSound(audioContext) {
 }
 
 // ============================================================
-// FULLSCREEN TOGGLE FUNCTION
+// FULLSCREEN TOGGLE FUNCTION (uses native Fullscreen API + CSS fallback)
 // ============================================================
 function toggleFullscreenMode() {
   const roomWrap = document.getElementById('roomWrap');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
-  
   if (!roomWrap || !fullscreenBtn) return;
-  
-  isFullscreenMode = !isFullscreenMode;
+
+  const inRoomNativeFs = document.fullscreenElement === roomWrap;
+  const inTileNativeFs = !!document.fullscreenElement && !!document.fullscreenElement.classList && document.fullscreenElement.classList.contains('video-tile');
+
+  // Exiting priority: if a tile is fullscreen, exit it on button press.
+  if (inTileNativeFs) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+
+  // If we're in native room fullscreen, exit.
+  if (inRoomNativeFs) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+
+  // If CSS-only fullscreen mode is active (native API rejected/unavailable),
+  // clicking again should also exit that.
+  if (isFullscreenMode) {
+    isFullscreenMode = false;
+    roomWrap.classList.remove('fullscreen-mode');
+    if (fullscreenBtn) {
+      fullscreenBtn.classList.remove('active');
+      fullscreenBtn.title = 'Toggle fullscreen video area';
+    }
+    updateFullscreenExitButton();
+    return;
+  }
+
+  // Otherwise enter fullscreen.
+  isFullscreenMode = true;
   fullscreenTileId = null;
-  
-  roomWrap.classList.toggle('fullscreen-mode', isFullscreenMode);
-  fullscreenBtn.classList.toggle('active', isFullscreenMode);
-  
-  fullscreenBtn.textContent = isFullscreenMode ? '⛶' : '⛶';
-  fullscreenBtn.title = isFullscreenMode ? 'Exit fullscreen' : 'Toggle fullscreen video area';
-  
+  roomWrap.classList.add('fullscreen-mode');
+  fullscreenBtn.classList.add('active');
+  fullscreenBtn.title = 'Exit fullscreen';
   updateFullscreenExitButton();
+
+  // Ask the browser to truly fullscreen the room wrapper. If the browser
+  // doesn't support the API (older mobile browsers, denied permissions, etc.)
+  // the CSS-class approach above keeps the meeting usable. ESC handles both.
+  if (typeof roomWrap.requestFullscreen === 'function') {
+    roomWrap.requestFullscreen().catch((err) => {
+      console.warn('Native fullscreen unavailable, using CSS-only mode:', err);
+    });
+  }
 }
 
 function exitFullscreen() {
-  if (isFullscreenMode || fullscreenTileId) {
+  const roomWrap = document.getElementById('roomWrap');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+  // If the browser is currently showing something fullscreen, ask it to exit
+  // (this fires ESC-equivalent behavior and triggers fullscreenchange).
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+
+  // Otherwise just clean up our CSS-class state.
+  isFullscreenMode = false;
+  fullscreenTileId = null;
+  if (roomWrap) roomWrap.classList.remove('fullscreen-mode');
+  if (fullscreenBtn) {
+    fullscreenBtn.classList.remove('active');
+    fullscreenBtn.title = 'Toggle fullscreen video area';
+  }
+  document.querySelectorAll('.video-tile.tile-fullscreen').forEach(tile => {
+    tile.classList.remove('tile-fullscreen');
+  });
+  updateFullscreenExitButton();
+}
+
+// Called whenever the browser leaves or enters fullscreen (including ESC).
+// Keeps our UI state and CSS classes in sync with reality.
+function syncFullscreenState() {
+  const roomWrap = document.getElementById('roomWrap');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const inBrowserFs = !!document.fullscreenElement;
+  const fsTarget = document.fullscreenElement;
+
+  if (!inBrowserFs) {
+    // Browser is no longer fullscreen -- user pressed ESC or clicked the exit button.
     isFullscreenMode = false;
     fullscreenTileId = null;
-    
-    const roomWrap = document.getElementById('roomWrap');
-    const fullscreenBtn = document.getElementById('fullscreenBtn');
-    
-    roomWrap.classList.remove('fullscreen-mode');
-    fullscreenBtn.classList.remove('active');
-    
+    if (roomWrap) roomWrap.classList.remove('fullscreen-mode');
+    if (fullscreenBtn) {
+      fullscreenBtn.classList.remove('active');
+      fullscreenBtn.title = 'Toggle fullscreen video area';
+    }
     document.querySelectorAll('.video-tile.tile-fullscreen').forEach(tile => {
       tile.classList.remove('tile-fullscreen');
     });
-    
     updateFullscreenExitButton();
+    return;
   }
+
+  // The browser is fullscreen -- figure out which of our modes it represents.
+  if (fsTarget === roomWrap) {
+    isFullscreenMode = true;
+    roomWrap.classList.add('fullscreen-mode');
+    if (fullscreenBtn) {
+      fullscreenBtn.classList.add('active');
+      fullscreenBtn.title = 'Exit fullscreen';
+    }
+  } else if (fsTarget && fsTarget.classList && fsTarget.classList.contains('video-tile')) {
+    isFullscreenMode = false;
+    roomWrap.classList.remove('fullscreen-mode');
+    if (fullscreenBtn) {
+      fullscreenBtn.classList.remove('active');
+      fullscreenBtn.title = 'Toggle fullscreen video area';
+    }
+    document.querySelectorAll('.video-tile.tile-fullscreen').forEach(tile => {
+      tile.classList.remove('tile-fullscreen');
+    });
+    fsTarget.classList.add('tile-fullscreen');
+    fullscreenTileId = fsTarget.id;
+  }
+  updateFullscreenExitButton();
 }
 
 function updateFullscreenExitButton() {
   let exitBtn = document.getElementById('fullscreenExitBtn');
-  
+  const inBrowserFs = !!document.fullscreenElement;
+  const shouldShow = isFullscreenMode || !!fullscreenTileId || inBrowserFs;
+
   if (!exitBtn) {
     exitBtn = document.createElement('button');
     exitBtn.id = 'fullscreenExitBtn';
     exitBtn.className = 'fullscreen-exit-btn';
     exitBtn.textContent = '✕ Exit Fullscreen';
-    exitBtn.style.display = 'none';
     document.body.appendChild(exitBtn);
     exitBtn.addEventListener('click', exitFullscreen);
   }
-  
-  if (isFullscreenMode || fullscreenTileId) {
-    exitBtn.style.display = 'block';
-  } else {
-    exitBtn.style.display = 'none';
+  exitBtn.style.display = shouldShow ? 'block' : 'none';
+}
+
+// Clicking a tile flips it into native fullscreen. Clicking the same tile
+// again (or pressing ESC) exits. We keep the CSS class as a fallback in case
+// the native API is unavailable on the user's browser.
+function toggleTileFullscreen(tileId) {
+  const tile = document.getElementById(tileId);
+  if (!tile) return;
+
+  // If this tile is the current target, exit fullscreen.
+  if (fullscreenTileId === tileId) {
+    if (document.fullscreenElement === tile) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      tile.classList.remove('tile-fullscreen');
+      fullscreenTileId = null;
+      updateFullscreenExitButton();
+    }
+    return;
+  }
+
+  // Switching from one tile (or the room) to this tile.
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+
+  // Remove any stale tile-fullscreen class on other tiles.
+  document.querySelectorAll('.video-tile.tile-fullscreen').forEach(t => {
+    if (t !== tile) t.classList.remove('tile-fullscreen');
+  });
+
+  // If the room-wide fullscreen was on, flip it off so the tile focus is clear.
+  const roomWrap = document.getElementById('roomWrap');
+  if (roomWrap) roomWrap.classList.remove('fullscreen-mode');
+  isFullscreenMode = false;
+
+  tile.classList.add('tile-fullscreen');
+  fullscreenTileId = tileId;
+  updateFullscreenExitButton();
+
+  if (typeof tile.requestFullscreen === 'function') {
+    tile.requestFullscreen().catch((err) => {
+      console.warn('Native tile fullscreen unavailable, using CSS-only mode:', err);
+    });
   }
 }
 
-function toggleTileFullscreen(tileId) {
-  if (fullscreenTileId === tileId) {
-    fullscreenTileId = null;
-    document.getElementById(tileId).classList.remove('tile-fullscreen');
-  } else {
-    if (fullscreenTileId) {
-      document.getElementById(fullscreenTileId).classList.remove('tile-fullscreen');
-    }
-    
-    fullscreenTileId = tileId;
-    document.getElementById(tileId).classList.add('tile-fullscreen');
+// ============================================================
+// THEME TOGGLE (light/dark)
+// ============================================================
+function applyTheme(theme) {
+  currentTheme = theme === 'light' ? 'light' : 'dark';
+  document.body.classList.toggle('theme-light', currentTheme === 'light');
+  try { localStorage.setItem(THEME_STORAGE_KEY, currentTheme); } catch (_) { /* ignore */ }
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) {
+    btn.title = currentTheme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+    btn.setAttribute('aria-label', btn.title);
   }
-  
-  updateFullscreenExitButton();
+}
+
+function toggleTheme() {
+  applyTheme(currentTheme === 'light' ? 'dark' : 'light');
+}
+
+function loadSavedTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch (_) { /* ignore */ }
+  // Default to dark; honor the user's OS preference if it asks for light.
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+    return 'light';
+  }
+  return 'dark';
 }
 
 // ============================================================
@@ -817,7 +979,8 @@ function joinMeeting() {
   });
 
   document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreenMode);
-  
+  document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.getElementById('adminPanelBackdrop').hidden) {
       closeAdminPanel();
@@ -827,6 +990,13 @@ function joinMeeting() {
       exitFullscreen();
     }
   });
+
+  // Sync UI state whenever the browser's fullscreen state changes (ESC,
+  // clicking the browser's "exit fullscreen" affordance, etc.).
+  document.addEventListener('fullscreenchange', syncFullscreenState);
+  document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+  document.addEventListener('mozfullscreenchange', syncFullscreenState);
+  document.addEventListener('MSFullscreenChange', syncFullscreenState);
 
   document.getElementById('micBtn').classList.toggle('off', !micOn);
   document.getElementById('camBtn').classList.toggle('off', !cameraOn);
