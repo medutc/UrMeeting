@@ -95,12 +95,13 @@
 /* Chat messages: system line gray stays legible */
 .theme-light .chat-msg .text[style*="italic"] { color: #64748b !important; }
 
-/* Theme toggle button styling */
+/* Theme toggle button styling.
+   theme-light.png  = white sun  (visible on dark button bg) -> shown in dark mode
+   theme-dark.png   = black moon (visible on light button bg) -> shown in light mode */
 .theme-toggle-btn .theme-icon-light,
 .theme-toggle-btn .theme-icon-dark { display: none; }
-.theme-light .theme-toggle-btn .theme-icon-light { display: inline; }
-.theme-light .theme-toggle-btn .theme-icon-dark { display: none; }
-:not(.theme-light) .theme-toggle-btn .theme-icon-dark { display: inline; }
+.theme-light  .theme-toggle-btn .theme-icon-dark  { display: inline-block; }
+:not(.theme-light) .theme-toggle-btn .theme-icon-light { display: inline-block; }
 
 * { box-sizing: border-box; }
 
