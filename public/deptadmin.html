@@ -1,5 +1,4 @@
 
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,6 +69,7 @@
 <script src="common.js"></script>
 <script>
 let employees = [];
+let allMeetings = [];
 
 async function init() {
   initThemeToggle('.topbar-actions');
@@ -123,6 +123,7 @@ async function loadEmployees() {
 
 async function loadMeetings() {
   const { meetings } = await apiGet('/api/meetings/department');
+  allMeetings = meetings;
   const el = document.getElementById('meetingsList');
   if (meetings.length === 0) { el.innerHTML = '<p class="empty-state">No meetings scheduled yet.</p>'; return; }
 
@@ -174,7 +175,24 @@ function resetForm() {
 }
 
 async function deleteMeeting(id) {
-  if (!confirm('Delete this meeting? Its attendance record will be moved to Meeting History.')) return;
+  const m = allMeetings.find(x => x.id === id);
+  if (!m) return;
+  const ok = await confirmAction({
+    title: 'Delete this meeting?',
+    message: 'The meeting will be cancelled. Its attendance record will be moved to Meeting History so you can review it later.',
+    confirmText: 'Delete meeting',
+    icon: 'trash',
+    target: {
+      label: 'Meeting to delete',
+      rows: [
+        { label: 'Title',        value: m.title || '—' },
+        { label: 'Date',         value: m.date },
+        { label: 'Time',         value: m.time },
+        { label: 'Participants', value: String((m.participants || []).length) }
+      ]
+    }
+  });
+  if (!ok) return;
   await apiDelete('/api/meetings/' + id);
   await loadMeetings();
   await loadHistory();

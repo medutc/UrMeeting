@@ -1,4 +1,3 @@
-
 /* ============================================================
    UrMeeting — Global Design System
    Modern · Fresh · Smooth · Meeting-native
@@ -459,4 +458,162 @@ th {
 
   .actions-row { flex-direction: column; width: 100%; }
   .actions-row .btn { width: 100%; padding: 12px 16px; }
+}
+
+/* ============================================================
+   CONFIRM MODAL — stylish replacement for window.confirm()
+   Used by confirmAction() in common.js. Reuses design tokens
+   (--card-bg, --border, --text-muted, --brand-soft, etc.) so it
+   adapts automatically to both light and dark themes.
+   ============================================================ */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  opacity: 0;
+  animation: confirmOverlayIn 0.2s ease forwards;
+}
+[data-theme="dark"] .confirm-overlay {
+  background: rgba(7, 11, 22, 0.72);
+}
+@keyframes confirmOverlayIn { to { opacity: 1; } }
+.confirm-overlay.is-leaving {
+  animation: confirmOverlayOut 0.18s ease forwards;
+}
+@keyframes confirmOverlayOut { to { opacity: 0; } }
+
+.confirm-modal {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  background: var(--card-bg);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 30px 28px 24px;
+  box-shadow:
+    var(--card-shadow-hover),
+    0 30px 80px -20px rgba(15, 23, 42, 0.45);
+  transform: translateY(8px) scale(0.97);
+  opacity: 0;
+  animation: confirmModalIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) 0.05s forwards;
+}
+@keyframes confirmModalIn {
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.confirm-overlay.is-leaving .confirm-modal {
+  animation: confirmModalOut 0.18s ease forwards;
+}
+@keyframes confirmModalOut {
+  to { transform: translateY(8px) scale(0.97); opacity: 0; }
+}
+
+.confirm-icon-wrap {
+  display: flex;
+  justify-content: center;
+  margin: -4px 0 18px;
+}
+.confirm-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 30% 28%, #fecaca 0%, #f87171 55%, #ef4444 100%);
+  box-shadow:
+    0 14px 32px -8px rgba(239, 68, 68, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  animation: confirmIconPop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both;
+}
+@keyframes confirmIconPop {
+  from { transform: scale(0.5) rotate(-10deg); opacity: 0; }
+  to   { transform: scale(1)    rotate(0);     opacity: 1; }
+}
+.confirm-icon svg {
+  width: 32px;
+  height: 32px;
+  color: #ffffff;
+  stroke: #ffffff;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.08));
+}
+
+.confirm-title {
+  text-align: center;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 6px;
+  color: var(--text);
+  line-height: 1.3;
+}
+.confirm-message {
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin: 0 0 18px;
+}
+
+/* Highlight preview block: shows what's about to be deleted */
+.confirm-target {
+  background: var(--brand-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 0 0 20px;
+  font-size: 13px;
+}
+.confirm-target-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+.confirm-target-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border-soft);
+}
+.confirm-target-row:first-of-type { border-top: none; }
+.confirm-target-row .k {
+  color: var(--text-muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.confirm-target-row .v {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+  word-break: break-word;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.confirm-actions .btn {
+  min-width: 112px;
+  padding: 11px 18px;
+}
+
+@media (max-width: 480px) {
+  .confirm-modal { padding: 24px 20px 20px; border-radius: 18px; }
+  .confirm-title { font-size: 17px; }
+  .confirm-actions { flex-direction: column-reverse; }
+  .confirm-actions .btn { width: 100%; }
 }

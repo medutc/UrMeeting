@@ -1,4 +1,3 @@
-
 // common.js — shared helpers for all dashboard pages
 async function apiGet(url) {
   const res = await fetch(url);
@@ -166,4 +165,97 @@ function initMessagesBadge(currentUser) {
     socket.on('direct-message', refreshUnreadCount);
     socket.on('message-deleted', refreshUnreadCount);
   }
+}
+
+// ============================================================
+// confirmAction(options) — a stylish replacement for window.confirm()
+// that matches the UrMeeting design system (glass card, gradient
+// icon, smooth animations, light/dark theme aware).
+// Returns a Promise<boolean>:
+//   true  → user clicked the confirm button
+//   false → user clicked Cancel, pressed Escape, or dismissed the
+//           backdrop by clicking outside the modal.
+//
+// options = {
+//   title:       string  (e.g. "Delete this account?")
+//   message:     string  (optional explanatory text)
+//   confirmText: string  (e.g. "Delete account", defaults to "Confirm")
+//   cancelText:  string  (defaults to "Cancel")
+//   icon:        'trash' | 'warning'  (defaults to 'trash')
+//   target: {
+//     label: string,                  (e.g. "Account to delete")
+//     rows:  [{ label, value }, ...]  (key/value preview block)
+//   }
+// }
+// ============================================================
+function confirmAction(options) {
+  return new Promise((resolve) => {
+    const opts = options || {};
+    const title       = opts.title       || 'Are you sure?';
+    const message     = opts.message     || '';
+    const confirmText = opts.confirmText || 'Confirm';
+    const cancelText  = opts.cancelText  || 'Cancel';
+    const iconKind    = opts.icon === 'warning' ? 'warning' : 'trash';
+    const target      = opts.target || null;
+
+    // Remove any leftover confirm from a previous call.
+    const existing = document.getElementById('confirmRoot');
+    if (existing) existing.remove();
+
+    const svgTrash = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>';
+    const svgWarning = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+    const iconSvg = iconKind === 'warning' ? svgWarning : svgTrash;
+
+    const hasTarget = target && (target.label || (target.rows && target.rows.length));
+    const targetHtml = hasTarget
+      ? '<div class="confirm-target">'
+        + (target.label ? '<div class="confirm-target-label">' + escapeHtml(target.label) + '</div>' : '')
+        + (target.rows || []).map(function (r) {
+            return '<div class="confirm-target-row"><span class="k">' + escapeHtml(r.label) + '</span><span class="v">' + escapeHtml(String(r.value == null ? '—' : r.value)) + '</span></div>';
+          }).join('')
+        + '</div>'
+      : '';
+
+    const root = document.createElement('div');
+    root.id = 'confirmRoot';
+    root.className = 'confirm-overlay';
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+    root.innerHTML =
+      '<div class="confirm-modal" role="document">'
+      +   '<div class="confirm-icon-wrap"><div class="confirm-icon">' + iconSvg + '</div></div>'
+      +   '<h3 class="confirm-title">' + escapeHtml(title) + '</h3>'
+      +   (message ? '<p class="confirm-message">' + escapeHtml(message) + '</p>' : '')
+      +   targetHtml
+      +   '<div class="confirm-actions">'
+      +     '<button type="button" class="btn btn-secondary" data-confirm-cancel>' + escapeHtml(cancelText) + '</button>'
+      +     '<button type="button" class="btn btn-danger"    data-confirm-ok>'    + escapeHtml(confirmText) + '</button>'
+      +   '</div>'
+      + '</div>';
+
+    document.body.appendChild(root);
+
+    const okBtn     = root.querySelector('[data-confirm-ok]');
+    const cancelBtn = root.querySelector('[data-confirm-cancel]');
+
+    function close(value) {
+      document.removeEventListener('keydown', escHandler);
+      root.classList.add('is-leaving');
+      setTimeout(function () { root.remove(); resolve(value); }, 180);
+    }
+
+    okBtn.addEventListener('click',     function () { close(true);  });
+    cancelBtn.addEventListener('click', function () { close(false); });
+
+    // Click outside the modal (on the dimmed backdrop) cancels.
+    root.addEventListener('click', function (e) { if (e.target === root) close(false); });
+
+    // Escape key cancels.
+    function escHandler(e) { if (e.key === 'Escape') close(false); }
+    document.addEventListener('keydown', escHandler);
+
+    // Focus the Cancel button by default — prevents the destructive
+    // action from firing with a stray Enter / Space press.
+    setTimeout(function () { cancelBtn.focus(); }, 0);
+  });
 }
