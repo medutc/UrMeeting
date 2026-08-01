@@ -1,6 +1,6 @@
 /* ============================================================
    UrMeeting — Global Design System
-   Modern · Fresh · Smooth · Meeting-native
+   Modern · Fresh · Smooth · Meeting-native · Fully responsive
    ============================================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
@@ -108,9 +108,18 @@
   --login-shadow: 0 30px 80px -20px rgba(0,0,0,0.85);
 }
 
+/* Safe-area insets for iOS notch / home-bar (used throughout). */
+:root {
+  --safe-top:    max(12px, env(safe-area-inset-top, 0px));
+  --safe-right:  max(12px, env(safe-area-inset-right, 0px));
+  --safe-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  --safe-left:   max(12px, env(safe-area-inset-left, 0px));
+}
+
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
+html, body { min-height: 100%; }
 
 body {
   margin: 0;
@@ -122,6 +131,8 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   transition: background 0.3s ease, color 0.3s ease;
+  /* Helps iOS Safari: prevent inputs from zooming the page on focus. */
+  -webkit-text-size-adjust: 100%;
 }
 
 /* ============================================================
@@ -141,9 +152,12 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  padding-top:    calc(14px + var(--safe-top));
+  padding-right:  calc(28px + var(--safe-right));
+  padding-left:   calc(28px + var(--safe-left));
 }
 
-.topbar h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+.topbar h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
 
 .topbar-title {
   display: flex;
@@ -151,6 +165,7 @@ body {
   gap: 14px;
   margin: 0;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .topbar-logo {
@@ -158,6 +173,7 @@ body {
   width: auto;
   object-fit: contain;
   filter: drop-shadow(0 4px 12px rgba(99,102,241,0.25));
+  flex-shrink: 0;
 }
 
 .topbar .role-badge {
@@ -170,9 +186,10 @@ body {
   margin-left: 10px;
   color: #fff;
   box-shadow: 0 6px 18px -6px var(--brand-ring);
+  white-space: nowrap;
 }
 
-.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .theme-toggle-btn {
   display: inline-flex;
@@ -181,6 +198,14 @@ body {
   padding: 9px 11px;
 }
 .theme-toggle-icon { width: 18px; height: 18px; object-fit: contain; }
+
+/* On the login page (no topbar) the theme button floats in the corner. */
+body > .theme-toggle-btn {
+  position: fixed;
+  top:   calc(16px + var(--safe-top));
+  right: calc(16px + var(--safe-right));
+  z-index: 10;
+}
 
 /* ============================================================
    BUTTONS
@@ -196,6 +221,8 @@ body {
   letter-spacing: -0.01em;
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.18s ease;
   white-space: nowrap;
+  /* Comfortable touch target on mobile. */
+  min-height: 40px;
 }
 .btn:active { transform: translateY(1px) scale(0.99); }
 
@@ -220,8 +247,10 @@ body {
 }
 .btn-secondary:hover { background: var(--btn-secondary-hover); transform: translateY(-1px); }
 
+.btn-table-action { padding: 4px 10px !important; font-size: 12px; min-height: 0; }
+
 /* Unread-messages notification badge on the "💬 Messages" nav button */
-.messages-link { position: relative; }
+.messages-link { position: relative; text-decoration: none; }
 .messages-badge {
   display: none;
   align-items: center;
@@ -244,7 +273,14 @@ body {
 /* ============================================================
    LAYOUT
    ============================================================ */
-.container { max-width: 1140px; margin: 0 auto; padding: 32px 24px; }
+.container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  padding-right:  calc(24px + var(--safe-right));
+  padding-left:   calc(24px + var(--safe-left));
+  padding-bottom: calc(32px + var(--safe-bottom));
+}
 
 .card {
   background: var(--card-bg);
@@ -266,9 +302,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
+.card h4 { margin: 0 0 6px; font-size: 14px; }
 
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+
+.form-actions { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ============================================================
    FORMS
@@ -291,6 +331,8 @@ input, select, textarea {
   background: var(--input-bg);
   color: var(--input-text);
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  /* Prevent iOS zoom on focus (browser auto-zooms if font-size < 16px). */
+  max-font-size: 100%;
 }
 input::placeholder, textarea::placeholder { color: var(--empty-color); }
 input:focus, select:focus, textarea:focus {
@@ -301,7 +343,7 @@ input:focus, select:focus, textarea:focus {
 textarea { resize: vertical; min-height: 64px; line-height: 1.5; }
 
 /* ============================================================
-   TABLES
+   TABLES — responsive (scroll on tablet, card layout on phone)
    ============================================================ */
 .table-responsive {
   width: 100%;
@@ -321,6 +363,7 @@ th, td {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border-soft);
   font-size: 14px;
+  vertical-align: top;
 }
 tbody tr { transition: background 0.15s ease; }
 tbody tr:hover { background: var(--brand-soft); }
@@ -333,6 +376,11 @@ th {
   color: var(--th-text);
   font-weight: 700;
 }
+
+/* Compact tables used inside deptadmin history cards. */
+.history-detail-grid .table-responsive { border: none; }
+.history-detail-grid .table-responsive:first-child table { margin-top: 0; }
+.history-not-joined { margin: 0; padding-left: 18px; }
 
 /* ============================================================
    CHECKBOX LISTS
@@ -381,10 +429,15 @@ th {
    ============================================================ */
 .login-wrap {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding:
+    calc(24px + var(--safe-top))
+    calc(24px + var(--safe-right))
+    calc(24px + var(--safe-bottom))
+    calc(24px + var(--safe-left));
 }
 .login-box {
   background: var(--card-bg);
@@ -405,6 +458,7 @@ th {
 .login-box h1 { text-align: center; font-size: 20px; margin-bottom: 22px; font-weight: 700; }
 .platform-logo {
   max-width: 210px;
+  width: 60%;
   height: auto;
   display: block;
   margin: 0 auto 28px auto;
@@ -428,8 +482,25 @@ th {
   color: var(--tag-text);
 }
 
-.actions-row { display: flex; gap: 8px; }
+.actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .empty-state { color: var(--empty-color); font-size: 14px; padding: 14px 0; text-align: center; }
+
+.history-entry {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: var(--input-bg);
+}
+.history-entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.history-entry-meta { font-size: 13px; color: var(--text-muted); }
+.history-entry-desc { margin: 8px 0; font-size: 14px; }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -438,26 +509,158 @@ th {
 ::-webkit-scrollbar-thumb:hover { background: var(--brand); background-clip: padding-box; }
 
 /* ============================================================
-   RESPONSIVE
+   RESPONSIVE — applied across all 4 dashboard breakpoints
+   Breakpoints:
+     xl (≥1281px)        — desktop, unchanged
+     lg (≤1280px)        — small desktop / large tablet
+     md (≤900px)         — tablet portrait
+     sm (≤640px)         — large phone
+     xs (≤420px)         — small phone
    ============================================================ */
-@media (max-width: 800px) {
-  .grid-2 { grid-template-columns: 1fr; }
+
+/* Large desktop / tablet landscape */
+@media (max-width: 1280px) {
+  .container { max-width: 100%; }
 }
 
-@media (max-width: 600px) {
-  .container { padding: 20px 16px; }
+/* Tablet portrait — switch side-by-side cards into a single column,
+   tighten spacing, slightly smaller logo. */
+@media (max-width: 900px) {
+  .container { padding: 24px 18px; }
+
+  .topbar {
+    padding: 14px 18px;
+    gap: 10px;
+  }
+  .topbar h1 { font-size: 16px; }
+  .topbar-logo { height: 38px; }
+
+  .grid-2 { grid-template-columns: 1fr; }
+
+  .card { padding: 20px; margin-bottom: 18px; }
+  .card h2 { font-size: 15px; }
+
+  .topbar .role-badge { margin-left: 4px; padding: 3px 9px; font-size: 10px; }
+}
+
+/* Large phones — stack topbar rows, full-width table buttons,
+   smaller heading text, hide static table headers and turn each
+   row into a "card" using the data-label attributes. */
+@media (max-width: 640px) {
+  body { font-size: 15px; }
+
+  .container { padding: 18px 14px; }
 
   .topbar {
     flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 16px;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
   }
-  .topbar-actions { width: 100%; }
-  .topbar-actions .btn { flex: 1; text-align: center; }
+  .topbar-title { justify-content: flex-start; }
+  .topbar-actions { width: 100%; gap: 8px; }
+  .topbar-actions .btn { flex: 1 1 auto; min-width: 0; padding: 10px 12px; text-align: center; font-size: 13px; }
+  /* Make the theme toggle a tiny floating corner button on tiny screens
+     so it doesn't crowd the action row. */
+  .topbar-actions > .theme-toggle-btn { position: absolute; top: calc(8px + var(--safe-top)); right: calc(8px + var(--safe-right)); }
 
-  .actions-row { flex-direction: column; width: 100%; }
-  .actions-row .btn { width: 100%; padding: 12px 16px; }
+  .topbar h1 { font-size: 15px; }
+  .topbar-logo { height: 32px; }
+  .topbar .role-badge { padding: 3px 8px; font-size: 10px; }
+
+  .card { padding: 16px; border-radius: 14px; margin-bottom: 14px; }
+  .card h2 { font-size: 14.5px; }
+  .card h4 { font-size: 13px; }
+
+  /* Buttons: ensure touch targets are tall enough. */
+  .btn { min-height: 44px; padding: 11px 16px; }
+
+  /* Tables → card layout at phone width. Each row renders as a block,
+     each cell carries an inline label via data-label. */
+  .table-responsive {
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    overflow: visible;
+  }
+  .table-responsive table,
+  .table-responsive thead,
+  .table-responsive tbody,
+  .table-responsive tr,
+  .table-responsive th,
+  .table-responsive td { display: block; width: 100%; }
+
+  .table-responsive thead { display: none; } /* headers become inline labels */
+
+  .table-responsive tbody tr {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 6px 16px -10px rgba(31,41,90,0.18);
+  }
+
+  .table-responsive tbody tr:hover { background: var(--input-bg); }
+
+  .table-responsive td {
+    border: none;
+    padding: 6px 0;
+    display: grid;
+    grid-template-columns: 38% 1fr;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 13.5px;
+  }
+  .table-responsive td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  /* The last cell is treated as a full-width action row. */
+  .table-responsive td:last-child {
+    grid-template-columns: 1fr;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+  }
+  .table-responsive td:last-child::before { content: none; }
+  .table-responsive td:last-child .btn { width: 100%; justify-content: center; }
+  .actions-row { flex-direction: column; gap: 6px; }
+  .actions-row .btn { width: 100%; }
+
+  /* Forms touch-friendly on phones. */
+  label { font-size: 12px; }
+  input, select, textarea { font-size: 16px; padding: 12px 14px; }
+
+  /* Login: tighter card. */
+  .login-wrap { padding: 16px; }
+  .login-box { padding: 28px 22px; border-radius: 20px; }
+  .platform-logo { max-width: 160px; margin-bottom: 22px; }
+  .login-box h1 { font-size: 18px; }
+
+  /* Topbar role badge drops below the title rather than squeezing in. */
+  .topbar .role-badge { display: inline-block; margin-left: 0; margin-top: 4px; }
+
+  /* History entries */
+  .history-entry { padding: 12px; }
+  .history-entry-head { flex-direction: column; align-items: flex-start; }
+  .history-detail-grid .table-responsive table { min-width: 0; }
+}
+
+/* Very small phones */
+@media (max-width: 420px) {
+  .container { padding: 14px 12px; }
+  .topbar { padding: 10px 12px; }
+  .topbar h1 { font-size: 14px; }
+  .topbar-logo { height: 28px; }
+  .card { padding: 14px; border-radius: 12px; }
+  .card h2 { font-size: 13.5px; }
+  .topbar-actions .btn { font-size: 12px; padding: 9px 10px; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
 }
 
 /* ============================================================
@@ -612,6 +815,7 @@ th {
 }
 
 @media (max-width: 480px) {
+  .confirm-overlay { padding: 14px; }
   .confirm-modal { padding: 24px 20px 20px; border-radius: 18px; }
   .confirm-title { font-size: 17px; }
   .confirm-actions { flex-direction: column-reverse; }

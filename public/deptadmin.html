@@ -1,8 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=2.0, viewport-fit=cover">
 <title>Department Admin Dashboard</title>
 <link rel="stylesheet" href="style.css">
 <link rel="icon" type="image/png" href="images/UrMeetingLogo.png">
@@ -15,7 +15,7 @@
     <span id="pageTitle">Department Admin <span class="role-badge">DEPT ADMIN</span></span>
   </h1>
     <div class="topbar-actions">
-      <a class="btn btn-secondary" style="text-decoration:none; margin-right:8px;" href="/messages.html">💬 Messages</a>
+      <a class="btn btn-secondary messages-link" style="text-decoration:none;" href="/messages.html">💬 Messages</a>
       <button class="btn btn-secondary" onclick="logout()">Log Out</button>
     </div>
   </div>
@@ -39,7 +39,7 @@
             <input type="checkbox" id="selectAllEmployeesCheckbox"> Invite all department employees
           </label>
           <div class="checkbox-list" id="employeeCheckboxes"></div>
-          <div style="margin-top:14px; display:flex; gap:8px;">
+          <div class="form-actions">
             <button class="btn btn-primary" type="submit" id="submitBtn">Create Meeting</button>
             <button class="btn btn-secondary" type="button" id="cancelEditBtn" style="display:none;" onclick="resetForm()">Cancel Edit</button>
           </div>
@@ -50,13 +50,13 @@
 
       <div class="card">
         <h2>👥 Employees in My Department</h2>
-        <div id="employeesList"><p class="empty-state">Loading...</p></div>
+        <div class="table-responsive" id="employeesList"><p class="empty-state">Loading...</p></div>
       </div>
     </div>
 
     <div class="card">
       <h2>📋 My Department's Meetings</h2>
-      <div id="meetingsList"><p class="empty-state">Loading...</p></div>
+      <div class="table-responsive" id="meetingsList"><p class="empty-state">Loading...</p></div>
     </div>
 
     <div class="card">
@@ -117,7 +117,7 @@ async function loadEmployees() {
   listEl.innerHTML = employees.length === 0
     ? '<p class="empty-state">No employees in your department yet.</p>'
     : `<table><thead><tr><th>Name</th><th>Email</th></tr></thead><tbody>
-        ${employees.map(e => `<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.email)}</td></tr>`).join('')}
+        ${employees.map(e => `<tr><td data-label="Name">${escapeHtml(e.name)}</td><td data-label="Email">${escapeHtml(e.email)}</td></tr>`).join('')}
       </tbody></table>`;
 }
 
@@ -132,14 +132,14 @@ async function loadMeetings() {
     <tbody>
       ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
         <tr>
-          <td>${escapeHtml(m.title)}</td>
-          <td>${m.date}</td>
-          <td>${m.time}</td>
-          <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
-          <td class="actions-row">
-            <a class="btn btn-primary" style="padding:5px 10px; text-decoration:none;" href="/meeting-room.html?id=${m.id}">Join</a>
-            <button class="btn btn-secondary" style="padding:5px 10px;" onclick='editMeeting(${JSON.stringify(m).replace(/'/g,"&#39;")})'>Edit</button>
-            <button class="btn btn-danger" style="padding:5px 10px;" onclick="deleteMeeting('${m.id}')">Delete</button>
+          <td data-label="Title">${escapeHtml(m.title)}</td>
+          <td data-label="Date">${m.date}</td>
+          <td data-label="Time">${m.time}</td>
+          <td data-label="Participants">${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+          <td data-label="" class="actions-row">
+            <a class="btn btn-primary btn-table-action" href="/meeting-room.html?id=${m.id}">Join</a>
+            <button class="btn btn-secondary btn-table-action" onclick='editMeeting(${JSON.stringify(m).replace(/'/g,"&#39;")})'>Edit</button>
+            <button class="btn btn-danger btn-table-action" onclick="deleteMeeting('${m.id}')">Delete</button>
           </td>
         </tr>
       `).join('')}
@@ -208,32 +208,32 @@ async function loadHistory() {
 
   el.innerHTML = history.map((h, idx) => {
     const joinedRows = h.joined.length
-      ? h.joined.map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.email || '-')}</td><td>${escapeHtml(p.totalFormatted)}</td></tr>`).join('')
+      ? h.joined.map(p => `<tr><td data-label="Name">${escapeHtml(p.name)}</td><td data-label="Email">${escapeHtml(p.email || '-')}</td><td data-label="Time in meeting">${escapeHtml(p.totalFormatted)}</td></tr>`).join('')
       : `<tr><td colspan="3" class="empty-state">Nobody joined this meeting.</td></tr>`;
     const notJoinedRows = h.notJoined.length
       ? h.notJoined.map(p => `<li>${escapeHtml(p.name)} (${escapeHtml(p.email || '-')})</li>`).join('')
       : `<li class="empty-state">Everyone invited joined.</li>`;
 
     return `
-      <div class="history-entry" style="border:1px solid var(--border-color,#333); border-radius:8px; padding:14px; margin-bottom:12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div class="history-entry">
+        <div class="history-entry-head">
           <div>
             <strong>${escapeHtml(h.title)}</strong>
-            <div style="font-size:13px; color:var(--text-muted,#888);">Scheduled: ${h.date} ${h.time} &middot; Deleted: ${new Date(h.deletedAt).toLocaleString()}</div>
+            <div class="history-entry-meta">Scheduled: ${h.date} ${h.time} &middot; Deleted: ${new Date(h.deletedAt).toLocaleString()}</div>
           </div>
-          <div style="font-size:13px;"><strong>Actual duration:</strong> ${escapeHtml(h.durationFormatted)}</div>
+          <div class="history-entry-meta"><strong>Actual duration:</strong> ${escapeHtml(h.durationFormatted)}</div>
         </div>
-        ${h.description ? `<p style="margin:8px 0; font-size:14px;">${escapeHtml(h.description)}</p>` : ''}
-        <div class="grid-2" style="margin-top:10px; gap:16px;">
+        ${h.description ? `<p class="history-entry-desc">${escapeHtml(h.description)}</p>` : ''}
+        <div class="grid-2 history-detail-grid">
           <div>
-            <h4 style="margin:0 0 6px;">✅ Joined (${h.joined.length})</h4>
-            <table><thead><tr><th>Name</th><th>Email</th><th>Time in meeting</th></tr></thead>
+            <h4>✅ Joined (${h.joined.length})</h4>
+            <div class="table-responsive"><table><thead><tr><th>Name</th><th>Email</th><th>Time in meeting</th></tr></thead>
               <tbody>${joinedRows}</tbody>
-            </table>
+            </table></div>
           </div>
           <div>
-            <h4 style="margin:0 0 6px;">❌ Invited but did not join (${h.notJoined.length})</h4>
-            <ul style="margin:0; padding-left:18px;">${notJoinedRows}</ul>
+            <h4>❌ Invited but did not join (${h.notJoined.length})</h4>
+            <ul class="history-not-joined">${notJoinedRows}</ul>
           </div>
         </div>
       </div>

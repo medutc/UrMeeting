@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=2.0, viewport-fit=cover">
 <title>Super Admin Dashboard</title>
 <link rel="stylesheet" href="style.css">
 <link rel="icon" type="image/png" href="images/UrMeetingLogo.png">
@@ -14,7 +15,7 @@
     Super Admin Dashboard <span class="role-badge">SUPER ADMIN</span>
   </h1>
     <div class="topbar-actions">
-      <a class="btn btn-secondary" style="text-decoration:none; margin-right:8px;" href="/messages.html">💬 Messages</a>
+      <a class="btn btn-secondary messages-link" style="text-decoration:none;" href="/messages.html">💬 Messages</a>
       <button class="btn btn-secondary" onclick="logout()">Log Out</button>
     </div>
   </div>
@@ -47,13 +48,13 @@
 
       <div class="card">
         <h2>📋 All Accounts</h2>
-        <div id="usersList"><p class="empty-state">Loading...</p></div>
+        <div class="table-responsive" id="usersList"><p class="empty-state">Loading...</p></div>
       </div>
     </div>
 
     <div class="card">
       <h2>📅 All Meetings (Every Department)</h2>
-      <div id="meetingsList"><p class="empty-state">Loading...</p></div>
+      <div class="table-responsive" id="meetingsList"><p class="empty-state">Loading...</p></div>
     </div>
   </div>
 
@@ -90,11 +91,11 @@ async function loadUsers() {
       ${users.filter(u => u.role !== 'superadmin').map(u => {
         const dept = departments.find(d => d.id === u.departmentId);
         return `<tr>
-          <td>${escapeHtml(u.name)}</td>
-          <td>${escapeHtml(u.email)}</td>
-          <td><span class="tag">${u.role === 'dept_admin' ? 'Dept Admin' : 'Employee'}</span></td>
-          <td>${dept ? escapeHtml(dept.name) : '-'}</td>
-          <td><button class="btn btn-danger" style="padding:5px 10px;" onclick="removeUser('${u.id}')">Delete</button></td>
+          <td data-label="Name">${escapeHtml(u.name)}</td>
+          <td data-label="Email">${escapeHtml(u.email)}</td>
+          <td data-label="Role"><span class="tag">${u.role === 'dept_admin' ? 'Dept Admin' : 'Employee'}</span></td>
+          <td data-label="Department">${dept ? escapeHtml(dept.name) : '-'}</td>
+          <td data-label=""><button class="btn btn-danger btn-table-action" onclick="removeUser('${u.id}')">Delete</button></td>
         </tr>`;
       }).join('')}
     </tbody>
@@ -135,13 +136,13 @@ async function loadMeetings() {
     <tbody>
       ${meetings.sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).map(m => `
         <tr>
-          <td>${escapeHtml(m.title)}</td>
-          <td>${escapeHtml(m.departmentName)}</td>
-          <td>${m.date}</td>
-          <td>${m.time}</td>
-          <td>${escapeHtml(m.createdByName)}</td>
-          <td>${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
-          <td><a class="btn btn-primary" style="padding:5px 12px; text-decoration:none; display:inline-block;" href="/meeting-room.html?id=${m.id}">Join</a></td>
+          <td data-label="Title">${escapeHtml(m.title)}</td>
+          <td data-label="Department">${escapeHtml(m.departmentName)}</td>
+          <td data-label="Date">${m.date}</td>
+          <td data-label="Time">${m.time}</td>
+          <td data-label="Organizer">${escapeHtml(m.createdByName)}</td>
+          <td data-label="Participants">${m.participants.map(p => escapeHtml(p.name)).join(', ') || '-'}</td>
+          <td data-label=""><a class="btn btn-primary btn-table-action" href="/meeting-room.html?id=${m.id}">Join</a></td>
         </tr>
       `).join('')}
     </tbody>

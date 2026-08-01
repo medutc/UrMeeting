@@ -2,33 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=2.0, viewport-fit=cover">
 <title>Messages</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="messages.css">
 </head>
 <script>document.documentElement.setAttribute("data-theme", localStorage.getItem("urmeeting-theme")==="dark"?"dark":"light");</script>
 <body>
-   
+
   <div class="msg-wrap">
     <div class="topbar">
       <h1>💬 Company Messages</h1>
-      <div>
-        <button class="btn btn-secondary" onclick="goBack()">Back to Dashboard</button>
+      <div class="topbar-actions">
+        <button class="btn btn-secondary msg-back-btn" onclick="goBack()">Back to Dashboard</button>
         <button class="btn btn-secondary" onclick="logout()">Log Out</button>
-     
       </div>
     </div>
 
     <div class="msg-body">
-      <div class="directory-panel">
-        <div class="directory-search">
-          <input type="text" id="searchInput" placeholder="Search people...">
+      <div class="directory-panel" id="directoryPanel">
+        <div class="directory-header">
+          <div class="directory-search">
+            <input type="text" id="searchInput" placeholder="Search people...">
+          </div>
+          <button class="btn btn-secondary directory-close-btn" id="directoryCloseBtn" type="button">Back to chat</button>
         </div>
         <div class="directory-list" id="directoryList"><p class="empty-state">Loading...</p></div>
       </div>
 
-      <div class="chat-panel">
-        <div id="chatEmptyState" class="empty-state" style="margin:auto;">
+      <div class="chat-panel" id="chatPanel">
+        <button class="btn btn-secondary chat-back-btn" id="chatBackBtn" type="button">← Contacts</button>
+        <div id="chatEmptyState" class="empty-state">
           Select someone from the list to start chatting.
         </div>
 
@@ -56,7 +60,7 @@
             <div class="recording-bar" id="recordingBar" style="display:none;">
               <span class="rec-dot"></span>
               <span id="recordingTime">0:00</span>
-              <span style="flex:1;">Recording voice message…</span>
+              <span class="recording-label">Recording voice message…</span>
               <button class="btn btn-secondary" id="cancelRecordBtn">Cancel</button>
               <button class="btn" id="stopRecordBtn">Stop &amp; Send</button>
             </div>
@@ -69,7 +73,7 @@
 <script src="/socket.io/socket.io.js"></script>
 <script src="common.js"></script>
 <script>
-  
+
 let currentUser = null;
 let directory = [];
 let conversations = {};
@@ -132,10 +136,32 @@ async function init() {
   document.getElementById('stopRecordBtn').addEventListener('click', () => stopRecording(true));
   document.getElementById('cancelRecordBtn').addEventListener('click', () => stopRecording(false));
 
+  // Mobile back-to-contacts toggle inside the chat panel
+  const backBtn = document.getElementById('chatBackBtn');
+  const dirCloseBtn = document.getElementById('directoryCloseBtn');
+  if (backBtn) backBtn.addEventListener('click', () => showDirectory(true));
+  if (dirCloseBtn) dirCloseBtn.addEventListener('click', () => showDirectory(false));
+
   // Close any open message menu when clicking elsewhere
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.msg-menu-wrap')) closeAllMessageMenus();
   });
+}
+
+// On phones we either show the directory or the chat, never both.
+function showDirectory(showDir) {
+  const dirPanel = document.getElementById('directoryPanel');
+  const chatPanel = document.getElementById('chatPanel');
+  if (!dirPanel || !chatPanel) return;
+  // The CSS only flips between these modes at narrow widths; on desktop
+  // both panels are visible side-by-side, so this function is harmless there.
+  if (showDir) {
+    dirPanel.classList.add('is-shown-mobile');
+    chatPanel.classList.remove('is-shown-mobile');
+  } else {
+    dirPanel.classList.remove('is-shown-mobile');
+    chatPanel.classList.add('is-shown-mobile');
+  }
 }
 
 // ---------- Voice messages ----------
@@ -285,6 +311,9 @@ async function openChat(userId) {
 
   if (conversations[userId]) conversations[userId].unreadCount = 0;
   renderDirectory();
+
+  // On phones, switch to the chat panel automatically.
+  showDirectory(false);
 }
 
 function renderMessage(m) {

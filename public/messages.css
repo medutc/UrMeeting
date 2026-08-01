@@ -1,8 +1,14 @@
-
 /* ============================================================
    UrMeeting — Messages
-   Soft glass directory · modern chat bubbles
+   Soft glass directory · modern chat bubbles · fully responsive
    ============================================================ */
+
+:root {
+  --safe-top:    max(0px, env(safe-area-inset-top, 0px));
+  --safe-right:  max(0px, env(safe-area-inset-right, 0px));
+  --safe-bottom: max(0px, env(safe-area-inset-bottom, 0px));
+  --safe-left:   max(0px, env(safe-area-inset-left, 0px));
+}
 
 html, body { height: 100%; margin: 0; }
 body {
@@ -10,17 +16,30 @@ body {
   background: var(--bg, #eef2fb);
   color: var(--text, #0f172a);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
 }
 
-.msg-wrap { display: flex; flex-direction: column; height: 100vh; }
+.msg-wrap {
+  display: flex;
+  flex-direction: column;
+  /* Use dvh for mobile browsers so the chrome URL bar doesn't crop content. */
+  height: 100vh;
+  height: 100dvh;
+}
 
-.msg-body { flex: 1; display: flex; overflow: hidden; }
+.msg-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
 
 /* ============================================================
    DIRECTORY (left rail)
    ============================================================ */
 .directory-panel {
   width: 312px;
+  max-width: 50vw;
   background: var(--card-bg, rgba(255,255,255,0.85));
   backdrop-filter: blur(14px) saturate(150%);
   -webkit-backdrop-filter: blur(14px) saturate(150%);
@@ -28,12 +47,26 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-width: 0;
 }
-.directory-search { padding: 14px; border-bottom: 1px solid var(--border-soft, #eef2f7); }
+.directory-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border-soft, #eef2f7);
+}
+.directory-close-btn { display: none; } /* Only shown on phones via media query */
+
 .directory-search input {
-  width: 100%; padding: 11px 14px; border: 1px solid var(--border, #e2e8f0); border-radius: 999px;
-  font-size: 13px; font-family: inherit;
-  background: var(--input-bg, #fff); color: var(--input-text, #0f172a);
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 999px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--input-bg, #fff);
+  color: var(--input-text, #0f172a);
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 .directory-search input:focus { outline: none; border-color: var(--input-focus, #6366f1); box-shadow: 0 0 0 4px var(--brand-soft, rgba(99,102,241,0.12)); }
@@ -48,8 +81,10 @@ body {
   display: flex; align-items: center; gap: 12px;
   padding: 11px 16px; cursor: pointer; border-bottom: 1px solid var(--border-soft, #eef2f7);
   transition: background 0.15s ease;
+  min-height: 56px;
 }
 .directory-item:hover { background: var(--brand-soft, rgba(99,102,241,0.08)); }
+.directory-item:active { background: var(--brand-soft, rgba(99,102,241,0.18)); }
 .directory-item.active { background: var(--brand-soft, rgba(99,102,241,0.16)); }
 
 .avatar {
@@ -70,7 +105,17 @@ body {
 /* ============================================================
    CHAT THREAD
    ============================================================ */
-.chat-panel { flex: 1; display: flex; flex-direction: column; background: transparent; }
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  min-width: 0;
+  position: relative;
+}
+/* The "← Contacts" button only appears on phones. */
+.chat-back-btn { display: none; }
+
 .chat-header {
   padding: 15px 22px;
   background: var(--card-bg, rgba(255,255,255,0.85));
@@ -79,24 +124,34 @@ body {
   border-bottom: 1px solid var(--border-soft, #e2e8f0);
   display: flex; align-items: center; gap: 12px;
 }
-.chat-header .name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.chat-header .name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; word-break: break-word; }
 .chat-header .role { font-size: 12px; color: var(--empty-color, #94a3b8); }
 
 .chat-thread {
   flex: 1; overflow-y: auto; padding: 22px;
   display: flex; flex-direction: column; gap: 12px;
+  -webkit-overflow-scrolling: touch;
 }
-.bubble-row { display: flex; align-items: flex-start; gap: 6px; animation: bubbleIn 0.28s cubic-bezier(0.22,1,0.36,1); }
+.bubble-row { display: flex; align-items: flex-start; gap: 6px; animation: bubbleIn 0.28s cubic-bezier(0.22,1,0.36,1); min-width: 0; }
 .bubble-row.me { justify-content: flex-end; }
 @keyframes bubbleIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 .bubble {
-  max-width: 62%; padding: 11px 15px; border-radius: 18px; font-size: 14px; line-height: 1.5;
+  max-width: 62%;
+  padding: 11px 15px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.5;
   box-shadow: 0 4px 14px -6px rgba(15,23,42,0.18);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .deleted-text { font-style: italic; opacity: 0.7; }
 
 .msg-menu-wrap { position: relative; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+/* On touch devices the hover-to-reveal trick doesn't work; show the menu
+   button at lower opacity so users can always tap it. */
+@media (hover: none) { .msg-menu-wrap { opacity: 0.6; } }
 .bubble-row:hover .msg-menu-wrap { opacity: 1; }
 .msg-menu-btn {
   border: none; background: transparent; cursor: pointer; font-size: 16px; padding: 4px 2px;
@@ -105,7 +160,7 @@ body {
 .msg-menu {
   display: none; position: absolute; top: 26px; z-index: 20;
   background: var(--card-solid, #fff);
-  border: 1px solid var(--border-soft, #e2e8f0); border-radius: 12px;
+  border: 1px solid var(--border-soft, #eef2f7); border-radius: 12px;
   box-shadow: 0 18px 44px -14px rgba(15,23,42,0.28);
   min-width: 168px; flex-direction: column; overflow: hidden;
   animation: bubbleIn 0.18s ease;
@@ -130,7 +185,7 @@ body {
 }
 .bubble-row:not(.me) .bubble {
   background: var(--card-solid, #fff); color: var(--text, #0f172a);
-  border: 1px solid var(--border-soft, #e2e8f0); border-bottom-left-radius: 6px;
+  border: 1px solid var(--border-soft, #eef2f7); border-bottom-left-radius: 6px;
 }
 .bubble .time { font-size: 10px; opacity: 0.7; margin-top: 5px; display: block; }
 .bubble img { max-width: 260px; border-radius: 12px; display: block; margin-top: 6px; }
@@ -155,6 +210,9 @@ body {
   -webkit-backdrop-filter: blur(14px) saturate(150%);
   border-top: 1px solid var(--border-soft, #e2e8f0);
   padding: 14px 18px;
+  padding-bottom: calc(14px + var(--safe-bottom));
+  padding-left:   calc(18px + var(--safe-left));
+  padding-right:  calc(18px + var(--safe-right));
 }
 .attach-preview {
   display: none; align-items: center; gap: 10px;
@@ -168,6 +226,7 @@ body {
   flex: 1; padding: 12px 16px; border: 1px solid var(--border, #e2e8f0); border-radius: 999px; font-size: 14px;
   font-family: inherit; background: var(--input-bg, #fff); color: var(--input-text, #0f172a);
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  min-width: 0; /* lets it shrink instead of pushing icon buttons off-screen */
 }
 .chat-input-row input[type="text"]:focus { outline: none; border-color: var(--input-focus, #6366f1); box-shadow: 0 0 0 4px var(--brand-soft, rgba(99,102,241,0.12)); }
 
@@ -194,12 +253,14 @@ body {
 .recording-bar {
   display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 10px 14px;
   background: var(--brand-soft, rgba(99,102,241,0.1)); border-radius: 12px; font-size: 13px;
+  flex-wrap: wrap;
 }
 .rec-dot {
   width: 10px; height: 10px; border-radius: 50%; background: var(--danger, #ef4444); flex-shrink: 0;
   animation: pulse-mic 1s infinite;
 }
 .recording-bar .btn { padding: 7px 14px; font-size: 12px; }
+.recording-label { flex: 1 1 100%; } /* wraps onto its own line on phones */
 
 .empty-state { margin: auto; color: var(--empty-color, #94a3b8); text-align: center; padding: 40px; font-size: 14px; }
 
@@ -212,3 +273,80 @@ body {
 }
 .chat-thread::-webkit-scrollbar-thumb:hover,
 .directory-list::-webkit-scrollbar-thumb:hover { background: var(--brand, #6366f1); }
+
+/* ============================================================
+   RESPONSIVE — single column "tabs" mode on phones
+   Breakpoints:
+     desk (≥901px)        — directory on the left, chat on the right
+     tablet (≤900px)      — same, but narrower directory
+     phone (≤640px)       — only one of directory/chat is visible at a time;
+                           back button flips between them.
+     small (≤420px)       — tighter padding
+   ============================================================ */
+
+@media (max-width: 900px) {
+  .directory-panel { width: 280px; }
+  .chat-thread { padding: 18px 16px; }
+  .bubble { max-width: 70%; }
+}
+
+@media (max-width: 640px) {
+  /* Switch to a single-column tab style. */
+  .msg-body { position: relative; }
+  .directory-panel,
+  .chat-panel {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    max-width: 100%;
+    background: var(--bg, #eef2fb);
+    background-image: var(--bg-grad, none);
+    z-index: 1;
+  }
+  /* Default state: directory visible. */
+  .directory-panel { z-index: 2; }
+  .chat-panel { z-index: 1; display: flex; }
+  /* When the JS marks it, the directory hides and the chat shows. */
+  .directory-panel.is-shown-mobile { z-index: 2; display: flex; }
+  .chat-panel.is-shown-mobile      { z-index: 3; display: flex; }
+
+  /* Show the back-to-contacts button inside the chat panel. */
+  .chat-back-btn {
+    display: inline-flex;
+    margin: 10px 12px 0;
+    align-self: flex-start;
+    padding: 7px 14px;
+    font-size: 13px;
+    border-radius: 999px;
+  }
+
+  /* Directory gets a clear close affordance when shown over the chat
+     (in case chat ever pushes the user back into view). */
+  .directory-close-btn { display: inline-flex; align-self: flex-start; padding: 7px 14px; font-size: 13px; border-radius: 999px; }
+
+  .chat-header { padding: 12px 16px; }
+  .chat-thread { padding: 14px 12px; gap: 8px; }
+  .bubble { max-width: 85%; font-size: 14px; }
+  .avatar { width: 34px; height: 34px; font-size: 13px; }
+  .directory-item { padding: 12px 14px; min-height: 60px; }
+
+  .chat-input-row { gap: 8px; }
+  .chat-input-row input[type="text"] { font-size: 16px; padding: 11px 14px; } /* 16px prevents iOS zoom */
+  .icon-btn { width: 44px; height: 44px; font-size: 17px; }                    /* bigger touch target */
+}
+
+@media (max-width: 420px) {
+  .chat-header { padding: 10px 12px; }
+  .chat-header .name { font-size: 14px; }
+  .chat-header .role { font-size: 11px; }
+  .chat-thread { padding: 10px 10px; }
+  .bubble { max-width: 88%; padding: 9px 13px; font-size: 13.5px; border-radius: 16px; }
+  .chat-input-area { padding: 10px 10px; padding-bottom: calc(10px + var(--safe-bottom)); }
+  .icon-btn { width: 42px; height: 42px; font-size: 16px; }
+  .chat-input-row input[type="text"] { padding: 10px 12px; }
+  .recording-bar { padding: 8px 10px; }
+  .recording-bar .btn { padding: 6px 12px; font-size: 11.5px; }
+  .directory-item { padding: 10px 12px; gap: 10px; }
+  .dir-name { font-size: 13.5px; }
+  .dir-preview { font-size: 11.5px; }
+}
