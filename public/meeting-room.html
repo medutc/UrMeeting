@@ -103,6 +103,30 @@
       </div>
     </div>
 
+    <!-- SCREEN SHARE OPTIONS MODAL -->
+    <div class="poll-composer-backdrop" id="screenShareModal" hidden>
+      <div class="poll-composer screen-share-modal" role="dialog" aria-modal="true" aria-labelledby="screenShareModalTitle">
+        <h3 id="screenShareModalTitle">🖥️ Share your screen</h3>
+        <p class="screen-share-desc">Pick what to capture. Your screen will be shared with a small camera preview in the bottom-left for everyone.</p>
+        <div class="screen-share-options">
+          <button type="button" class="screen-share-option with-sound" id="shareScreenWithSoundBtn">
+            <div class="screen-share-opt-icon">🔊</div>
+            <div class="screen-share-opt-title">Share with sound</div>
+            <div class="screen-share-opt-desc">Includes tab/window audio</div>
+          </button>
+          <button type="button" class="screen-share-option no-sound" id="shareScreenNoSoundBtn">
+            <div class="screen-share-opt-icon">🔇</div>
+            <div class="screen-share-opt-title">Share without sound</div>
+            <div class="screen-share-opt-desc">Video only</div>
+          </button>
+        </div>
+        <div class="screen-share-note">Tip: in Chrome/Edge, when you pick a tab the browser also asks “Share tab audio” — leave it checked to enable sound.</div>
+        <div class="poll-composer-actions">
+          <button type="button" class="cancel-btn" id="cancelScreenShareBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- LIVE CAPTIONS DISPLAY -->
     <div class="captions-display" id="captionsDisplay" style="display:none;">
       <div class="captions-header">
@@ -196,12 +220,28 @@ let socket = null;
 // Media pipeline state
 let rawStream = null;
 let audioTrack = null;
+let outboundAudioTrack = null;        // what we actually send to peers (mic, or mic+system-audio mix during screen share)
 let outboundVideoTrack = null;
 let cameraOn = true;
 let micOn = true;
 let isScreenSharing = false;
 let screenStream = null;
-let preScreenShareTrack = null;
+let preScreenShareTrack = null;       // saved camera track we put back when sharing stops
+let preShareOutboundAudioTrack = null;// saved audio track we put back when sharing stops
+
+// Screen-share composite (canvas over the screen + camera PiP)
+let compositeCanvas = null;
+let compositeCtx = null;
+let compositeStream = null;
+let compositeVideoTrack = null;
+let compositeRafId = null;
+let screenHideVideo = null;          // offscreen <video> backing the canvas draw
+let cameraHideVideo = null;           // offscreen <video> used as the PiP source
+let compositeCamTrack = null;         // track currently being piped into cameraHideVideo
+
+// Screen-share audio mixer (AudioContext + MediaStreamDestination)
+let shareAudioCtx = null;
+let shareMixedAudioTrack = null;
 
 // FULLSCREEN STATE
 let isFullscreenMode = false;
@@ -906,6 +946,7 @@ async function init() {
   const camTrack = rawStream.getVideoTracks()[0] || null;
   cameraOn = !!camTrack;
   outboundVideoTrack = camTrack;
+  outboundAudioTrack = audioTrack; // initially the mic; replaced with mic+system mix during screen share
 
   const lobbyVideo = document.getElementById('lobbyVideo');
   lobbyVideo.srcObject = new MediaStream(camTrack ? [camTrack] : []);
@@ -954,6 +995,17 @@ function joinMeeting() {
   document.getElementById('micBtn').addEventListener('click', toggleMic);
   document.getElementById('camBtn').addEventListener('click', toggleCam);
   document.getElementById('screenShareBtn').addEventListener('click', toggleScreenShare);
+  document.getElementById('shareScreenWithSoundBtn').addEventListener('click', () => startScreenShare(true));
+  document.getElementById('shareScreenNoSoundBtn').addEventListener('click', () => startScreenShare(false));
+  document.getElementById('cancelScreenShareBtn').addEventListener('click', closeScreenShareModal);
+  document.getElementById('screenShareModal').addEventListener('click', (event) => {
+    if (event.target === document.getElementById('screenShareModal')) closeScreenShareModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !document.getElementById('screenShareModal').hidden) {
+      closeScreenShareModal();
+    }
+  });
   document.getElementById('handBtn').addEventListener('click', toggleHand);
   document.getElementById('reactionBtn').addEventListener('click', () => togglePopover('reactionsPopover'));
   document.getElementById('bgBtn').addEventListener('click', () => togglePopover('bgPopover'));
@@ -1015,14 +1067,15 @@ function togglePopover(id) {
 // ============================================================
 const localOutboundStream = new MediaStream();
 function syncLocalOutboundStream() {
+  const effectiveAudio = outboundAudioTrack || audioTrack;
   localOutboundStream.getTracks().forEach(t => {
-    if (t !== outboundVideoTrack && t !== audioTrack) localOutboundStream.removeTrack(t);
+    if (t !== outboundVideoTrack && t !== effectiveAudio) localOutboundStream.removeTrack(t);
   });
   if (outboundVideoTrack && !localOutboundStream.getTracks().includes(outboundVideoTrack)) {
     localOutboundStream.addTrack(outboundVideoTrack);
   }
-  if (audioTrack && !localOutboundStream.getTracks().includes(audioTrack)) {
-    localOutboundStream.addTrack(audioTrack);
+  if (effectiveAudio && !localOutboundStream.getTracks().includes(effectiveAudio)) {
+    localOutboundStream.addTrack(effectiveAudio);
   }
   return localOutboundStream;
 }
@@ -1479,6 +1532,10 @@ async function setCameraEnabled(enabled) {
       outboundVideoTrack = camTrack;
       await replaceOutboundTrackOnAllPeers(camTrack);
     }
+  } else {
+    // While sharing: rebuild the composite so the PiP appears/disappears
+    // when the presenter toggles their camera mid-share.
+    try { refreshCompositeCameraSource(); } catch (_) {}
   }
 
   updateLocalTileStream();
@@ -1487,43 +1544,387 @@ async function setCameraEnabled(enabled) {
 
 // ============================================================
 // SCREEN SHARING
+//   - User picks "with sound" / "without sound" in a modal.
+//   - Captured screen + (optionally) system audio are mixed/composited
+//     into the existing WebRTC pipeline using:
+//       * canvas.captureStream() to merge screen video with a small
+//         camera preview in the bottom-left.
+//       * AudioContext + MediaStreamDestination to mix mic + system
+//         audio into a single outbound track.
+//   - Cleanup on share stop reverts both video and audio tracks.
 // ============================================================
+
+function openScreenShareModal() {
+  const modal = document.getElementById('screenShareModal');
+  if (modal) modal.hidden = false;
+}
+function closeScreenShareModal() {
+  const modal = document.getElementById('screenShareModal');
+  if (modal) modal.hidden = true;
+}
+
 async function toggleScreenShare() {
   if (!isScreenSharing) {
-    try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    } catch (err) {
-      return;
-    }
-    preScreenShareTrack = outboundVideoTrack;
-    const screenTrack = screenStream.getVideoTracks()[0];
-    screenTrack.classList = screenTrack.classList || null;
-    outboundVideoTrack = screenTrack;
-    isScreenSharing = true;
-
-    await replaceOutboundTrackOnAllPeers(screenTrack);
-    updateLocalTileStream();
-    document.getElementById('tile-local').querySelector('video').classList.add('screen-track');
-    document.getElementById('screenShareBtn').classList.add('on-highlight');
-    socket.emit('screen-share-started', { meetingId });
-
-    screenTrack.onended = () => stopScreenShare();
+    openScreenShareModal();
   } else {
     stopScreenShare();
   }
 }
 
-async function stopScreenShare() {
-  if (!isScreenSharing) return;
-  if (screenStream) screenStream.getTracks().forEach(t => t.stop());
-  isScreenSharing = false;
-  outboundVideoTrack = preScreenShareTrack;
+async function startScreenShare(withSound) {
+  closeScreenShareModal();
+
+  // Guard: getDisplayMedia is unavailable in some embedded contexts.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    addSystemChatLine('Screen sharing is not supported in this browser.');
+    return;
+  }
+
+  try {
+    // Note: even with audio:true, the OS/browser picker decides whether to
+    // actually grant system-audio capture. Some browsers only allow audio
+    // capture when sharing a single tab and the user checks the toggle.
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+      audio: withSound ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false
+    });
+  } catch (err) {
+    // User cancelled the OS picker or denied permission — nothing to do.
+    console.warn('Screen capture cancelled or denied', err);
+    return;
+  }
+
+  const screenVideoTrack = screenStream.getVideoTracks()[0];
+  if (!screenVideoTrack) {
+    addSystemChatLine('Screen capture returned no video track.');
+    screenStream.getTracks().forEach(t => t.stop());
+    screenStream = null;
+    return;
+  }
+
+  const systemAudioTrack = withSound ? screenStream.getAudioTracks()[0] : null;
+  if (withSound && !systemAudioTrack) {
+    addSystemChatLine('Note: the browser/OS did not include audio. Pick a single tab and tick "Share tab audio" in the OS picker to share sound.');
+  }
+
+  // Save the current outbound video (camera or processed camera) and audio so we
+  // can restore them on stop.
+  preScreenShareTrack = outboundVideoTrack;
+  preShareOutboundAudioTrack = outboundAudioTrack || audioTrack;
+
+  // Build the composite viewport: screen filling the canvas, with a small camera
+  // preview in the bottom-left. This single track replaces the camera track
+  // we were sending — so every peer sees the same SCREEN + PiP view, and so
+  // does the presenter's own tile via the local outbound stream.
+  const camTrack = (cameraOn && rawStream) ? rawStream.getVideoTracks()[0] : null;
+  const composite = buildScreenCompositeStream(screenStream, camTrack, screenVideoTrack);
+  outboundVideoTrack = composite && composite.video ? composite.video : screenVideoTrack;
+
+  // Audio: mix mic with system audio (when present) into a single track.
+  outboundAudioTrack = systemAudioTrack
+    ? buildMixedAudioTrack(audioTrack, systemAudioTrack)
+    : (audioTrack || null);
+
+  if (!outboundAudioTrack) {
+    addSystemChatLine('Warning: no microphone is available — others will hear only the screen audio during share.');
+  }
+
+  isScreenSharing = true;
+
+  // Swap both senders on every peer and renegotiate so the new tracks are
+  // declared in the SDP. (replaceTrack alone is enough for codecs, but a fresh
+  // offer/sdp keeps things consistent when we just added or removed a sender.)
   await replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+  await replaceOutboundAudioTrackOnAllPeers(outboundAudioTrack);
+
   updateLocalTileStream();
   const localVideo = document.getElementById('tile-local').querySelector('video');
-  localVideo.classList.remove('screen-track');
+  if (localVideo) localVideo.classList.add('screen-track');
+  document.getElementById('screenShareBtn').classList.add('on-highlight');
+  socket.emit('screen-share-started', { meetingId, withSound: !!systemAudioTrack });
+
+  // If the presenter clicks "Stop sharing" in the OS banner, end everything.
+  screenVideoTrack.onended = () => stopScreenShare();
+}
+
+async function stopScreenShare() {
+  if (!isScreenSharing) return;
+  isScreenSharing = false;
+
+  stopScreenShareComposite();
+  stopScreenShareAudioMixer();
+
+  if (screenStream) {
+    try { screenStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    screenStream = null;
+  }
+
+  outboundVideoTrack = preScreenShareTrack;
+  outboundAudioTrack = preShareOutboundAudioTrack || audioTrack;
+
+  await replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+  await replaceOutboundAudioTrackOnAllPeers(outboundAudioTrack);
+
+  updateLocalTileStream();
+  const localVideo = document.getElementById('tile-local').querySelector('video');
+  if (localVideo) localVideo.classList.remove('screen-track');
   document.getElementById('screenShareBtn').classList.remove('on-highlight');
   socket.emit('screen-share-stopped', { meetingId });
+}
+
+// ---- Composite (screen + camera PiP) → single video track -------------------
+
+function buildScreenCompositeStream(screenMediaStream, camTrack, sourceScreenTrack) {
+  stopScreenShareComposite();
+
+  // Hidden <video> elements back our canvas draws. Both are offscreen; the
+  // browser still happily decodes them.
+  screenHideVideo = document.createElement('video');
+  screenHideVideo.autoplay = true;
+  screenHideVideo.muted = true;
+  screenHideVideo.playsInline = true;
+  screenHideVideo.srcObject = screenMediaStream;
+  Object.assign(screenHideVideo.style, {
+    position: 'fixed', left: '-9999px', top: '0',
+    width: '1px', height: '1px', opacity: '0', pointerEvents: 'none'
+  });
+  document.body.appendChild(screenHideVideo);
+
+  let cameraHideVideoEl = null;
+  if (camTrack && cameraOn) {
+    cameraHideVideoEl = document.createElement('video');
+    cameraHideVideoEl.autoplay = true;
+    cameraHideVideoEl.muted = true;
+    cameraHideVideoEl.playsInline = true;
+    cameraHideVideoEl.srcObject = new MediaStream([camTrack]);
+    Object.assign(cameraHideVideoEl.style, {
+      position: 'fixed', left: '-9999px', top: '0',
+      width: '1px', height: '1px', opacity: '0', pointerEvents: 'none'
+    });
+    document.body.appendChild(cameraHideVideoEl);
+  }
+  cameraHideVideo = cameraHideVideoEl;
+  compositeCamTrack = camTrack || null;
+
+  // Pick sensible canvas dimensions from the screen track, capped to keep
+  // bandwidth sane. getSettings() can return {} or null on some browsers
+  // before the capture has loaded — we fall back to a 720p default.
+  const rawSettings = (sourceScreenTrack && typeof sourceScreenTrack.getSettings === 'function') ? sourceScreenTrack.getSettings() || {} : {};
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(640, Math.min(1920, rawSettings.width || 1280));
+  canvas.height = Math.max(360, Math.min(1080, rawSettings.height || 720));
+  const ctx = canvas.getContext('2d');
+  compositeCanvas = canvas;
+  compositeCtx = ctx;
+
+  function drawFrame() {
+    const sv = screenHideVideo;
+    const cv = cameraHideVideo;
+    if (sv && compositeCtx && compositeCanvas) {
+      const w = compositeCanvas.width;
+      const h = compositeCanvas.height;
+
+      // Letterbox / cover the screen content into the canvas.
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      if (sv.readyState >= 2) {
+        const vw = sv.videoWidth || w;
+        const vh = sv.videoHeight || h;
+        const sratio = vw / vh;
+        const dratio = w / h;
+        let dx = 0, dy = 0, dw = w, dh = h;
+        if (sratio > dratio) {
+          dh = w / sratio;
+          dy = (h - dh) / 2;
+        } else {
+          dw = h * sratio;
+          dx = (w - dw) / 2;
+        }
+        ctx.drawImage(sv, dx, dy, dw, dh);
+      }
+
+      // Camera preview PiP in the bottom-left, only if camera is on
+      // and has live data.
+      if (cv && cv.readyState >= 2 && cameraOn && compositeCamTrack && compositeCamTrack.enabled !== false) {
+        const margin = Math.round(w * 0.018);
+        const pipW = Math.round(w * 0.20);
+        const pipH = Math.round(pipW * 9 / 16);
+        const pipX = margin;
+        const pipY = h - pipH - margin;
+
+        // Black backdrop + white border (Google Meet feel).
+        ctx.fillStyle = 'rgba(0,0,0,0.85)';
+        ctx.fillRect(pipX - 3, pipY - 3, pipW + 6, pipH + 6);
+        ctx.save();
+        // Mirror the camera horizontally so the presenter sees themselves mirrored (matches self-view convention).
+        ctx.translate(pipX + pipW, pipY);
+        ctx.scale(-1, 1);
+        ctx.drawImage(cv, 0, 0, pipW, pipH);
+        ctx.restore();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(pipX, pipY, pipW, pipH);
+
+        // Label: presenter name.
+        if (currentUser && currentUser.name) {
+          const fs = Math.max(11, Math.round(pipH * 0.18));
+          ctx.font = `700 ${fs}px Inter, "Segoe UI", system-ui, sans-serif`;
+          ctx.fillStyle = 'rgba(255,255,255,0.95)';
+          ctx.fillText(currentUser.name + ' (You)', pipX + 10, pipY + pipH - 10);
+        }
+      }
+    }
+    compositeRafId = requestAnimationFrame(drawFrame);
+  }
+
+  // Wait for the screen video to load before kicking off the draw loop so
+  // we capture real frames from frame one.
+  screenHideVideo.addEventListener('loadedmetadata', () => {
+    screenHideVideo.play().catch(() => {});
+    try {
+      const vw = screenHideVideo.videoWidth;
+      const vh = screenHideVideo.videoHeight;
+      if (vw && vh) {
+        compositeCanvas.width = Math.max(640, Math.min(1920, vw));
+        compositeCanvas.height = Math.max(360, Math.min(1080, vh));
+      }
+    } catch (_) {}
+    drawFrame();
+  }, { once: true });
+
+  // captureStream(30) gives the receiving end a 30fps outgoing track that
+  // mirrors the canvas we draw on. This is the single video track we'll send
+  // to every peer — so screen + camera PiP travel together.
+  compositeStream = canvas.captureStream(30);
+  compositeVideoTrack = compositeStream.getVideoTracks()[0];
+
+  return { video: compositeVideoTrack };
+}
+
+function stopScreenShareComposite() {
+  if (compositeRafId) {
+    cancelAnimationFrame(compositeRafId);
+    compositeRafId = null;
+  }
+  if (compositeVideoTrack) {
+    try { compositeVideoTrack.stop(); } catch (_) {}
+    compositeVideoTrack = null;
+  }
+  compositeStream = null;
+  compositeCanvas = null;
+  compositeCtx = null;
+  compositeCamTrack = null;
+  if (screenHideVideo) {
+    try { screenHideVideo.pause(); screenHideVideo.srcObject = null; } catch (_) {}
+    if (screenHideVideo.parentNode) screenHideVideo.parentNode.removeChild(screenHideVideo);
+    screenHideVideo = null;
+  }
+  if (cameraHideVideo) {
+    try { cameraHideVideo.pause(); cameraHideVideo.srcObject = null; } catch (_) {}
+    if (cameraHideVideo.parentNode) cameraHideVideo.parentNode.removeChild(cameraHideVideo);
+    cameraHideVideo = null;
+  }
+}
+
+function refreshCompositeCameraSource() {
+  // Called when the presenter toggles their camera during screen share so
+  // the PiP updates without rebuilding the whole canvas pipeline.
+  if (!isScreenSharing || !compositeCanvas) return;
+  if (cameraOn && rawStream) {
+    const newCam = rawStream.getVideoTracks()[0];
+    if (newCam && newCam !== compositeCamTrack) {
+      stopScreenShareComposite();
+      buildScreenCompositeStream(screenStream, newCam, (screenStream && screenStream.getVideoTracks()[0]) || null);
+      outboundVideoTrack = compositeVideoTrack;
+      replaceOutboundTrackOnAllPeers(outboundVideoTrack);
+      updateLocalTileStream();
+    }
+  } else {
+    // Camera turned off: just blank the PiP. The next frame loop keeps going
+    // because rawStream still has the video track (enabled=false); we just
+    // gate drawing on `cameraOn`.
+  }
+}
+
+// ---- Mixed audio (mic + system audio) → single audio track ------------------
+
+function buildMixedAudioTrack(micTrack, systemTrack) {
+  stopScreenShareAudioMixer();
+
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return micTrack;
+    const ctx = new AudioCtx();
+    const dest = ctx.createMediaStreamDestination();
+
+    if (micTrack) {
+      try {
+        const micSrc = ctx.createMediaStreamSource(new MediaStream([micTrack]));
+        // A tiny gain lets us balance system audio vs mic if it gets too loud.
+        const micGain = ctx.createGain();
+        micGain.gain.value = 1.0;
+        micSrc.connect(micGain).connect(dest);
+      } catch (e) {
+        console.warn('Mic source for mixing failed', e);
+      }
+    }
+    if (systemTrack) {
+      try {
+        const sysSrc = ctx.createMediaStreamSource(new MediaStream([systemTrack]));
+        const sysGain = ctx.createGain();
+        sysGain.gain.value = 1.0;
+        sysSrc.connect(sysGain).connect(dest);
+      } catch (e) {
+        console.warn('System audio source for mixing failed', e);
+      }
+    }
+
+    const mixedTrack = dest.stream.getAudioTracks()[0];
+    shareAudioCtx = ctx;
+    shareMixedAudioTrack = mixedTrack;
+
+    return mixedTrack;
+  } catch (e) {
+    console.warn('Audio mixing failed; falling back to mic only', e);
+    return micTrack || null;
+  }
+}
+
+function stopScreenShareAudioMixer() {
+  if (shareMixedAudioTrack) {
+    try { shareMixedAudioTrack.stop(); } catch (_) {}
+    shareMixedAudioTrack = null;
+  }
+  if (shareAudioCtx) {
+    try { shareAudioCtx.close().catch(() => {}); } catch (_) {}
+    shareAudioCtx = null;
+  }
+}
+
+// ---- Audio sender swap (parallel to replaceOutboundTrackOnAllPeers) ----------
+
+async function replaceOutboundAudioTrackOnAllPeers(newAudioTrack) {
+  const peerIds = Object.keys(peers);
+  for (const socketId of peerIds) {
+    const entry = peers[socketId];
+    if (!entry || !entry.pc || entry.pc.signalingState === 'closed') continue;
+    try {
+      let sender = entry.audioSender && entry.pc.getSenders().includes(entry.audioSender)
+        ? entry.audioSender
+        : entry.pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+      if (sender) {
+        await sender.replaceTrack(newAudioTrack || null);
+        entry.audioSender = sender;
+      } else if (newAudioTrack) {
+        entry.audioSender = entry.pc.addTrack(newAudioTrack, localOutboundStream);
+      }
+    } catch (e) {
+      console.warn('Failed to replace audio track for peer', socketId, e);
+    }
+  }
+  for (const socketId of peerIds) {
+    await renegotiatePeer(socketId);
+  }
 }
 
 function updateSpotlight() {
@@ -1989,6 +2390,8 @@ function paintPollCard(card, poll) {
 // ============================================================
 function leaveMeeting() {
   stopSegmentation();
+  stopScreenShareComposite();
+  stopScreenShareAudioMixer();
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
   if (rawStream) rawStream.getTracks().forEach(t => t.stop());
   Object.values(peers).forEach(p => p.pc.close());
@@ -1998,6 +2401,8 @@ function leaveMeeting() {
 
 window.addEventListener('beforeunload', () => {
   stopSegmentation();
+  stopScreenShareComposite();
+  stopScreenShareAudioMixer();
   if (screenStream) screenStream.getTracks().forEach(t => t.stop());
   if (rawStream) rawStream.getTracks().forEach(t => t.stop());
 });

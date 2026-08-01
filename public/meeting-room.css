@@ -411,6 +411,65 @@ html, body {
 .poll-composer-actions .create-btn:hover { transform: translateY(-1px); }
 .poll-error { color: var(--red); font-size: 12px; margin-top: 8px; min-height: 14px; }
 
+/* ============================================================
+   SCREEN SHARE OPTIONS MODAL
+   ============================================================ */
+.screen-share-modal { max-width: 460px; }
+.screen-share-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: -6px 0 16px;
+  line-height: 1.5;
+}
+.screen-share-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.screen-share-option {
+  background: var(--surface-2);
+  border: 2px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 18px 12px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.screen-share-option:hover {
+  border-color: var(--brand);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -10px var(--brand-ring);
+  background: var(--surface);
+}
+.screen-share-option:active { transform: translateY(0); }
+.screen-share-opt-icon {
+  font-size: 32px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.screen-share-opt-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.screen-share-opt-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.screen-share-option.with-sound .screen-share-opt-icon { color: var(--brand); }
+.screen-share-note {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
 /* Poll card in chat */
 .poll-card {
   background: var(--surface-2); border: 1px solid var(--panel-border); border-radius: 12px;
