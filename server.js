@@ -39,16 +39,29 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max
 
 // ---------- Email setup (uses environment variables for security) ----------
-// For Gmail: set GMAIL_USER and GMAIL_PASSWORD (use "App Password" not your actual password)
-// For other SMTP: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+// Pick ONE delivery path on Render:
+//
+//   A. TRUE GMAIL (recommended if the meeting invitations must literally come
+//      from your Gmail address):
+//      Set GMAIL_REFRESH_TOKEN + GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET +
+//      GMAIL_FROM_ADDRESS. Uses Google Gmail API over HTTPS — the ONLY way Gmail
+//      actually works on Render (Render blocks the raw SMTP ports Gmail would
+//      normally use).
+//      Setup: see the README / the comment block on sendViaGmailApi() below.
+//
+//   B. HTTPS provider (Brevo / SendGrid / Resend). Free tiers, works on Render,
+//      deliver to Gmail inboxes. EMAIL_FROM is the sender address (verify it at
+//      the provider first). You can verify your own Gmail there so invitations
+//      still appear "from" your Gmail even though the relay is HTTPS.
+//
+//   C. Gmail SMTP on port 465 (legacy / local dev only). Pass GMAIL_USER +
+//      GMAIL_PASSWORD. GMAIL_PASSWORD MUST be a 16-char App Password, not your
+//      normal Gmail login. On Render this WILL time out and fall through to the
+//      next provider — it is kept here only so you can run tests on your
+//      laptop and so any partial setup still fails fast and loudly.
+//
+//   D. Generic SMTP. Set SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
 const emailConfig = {
-  gmail: {
-    service: 'gmail',
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_PASSWORD
-    }
-  },
   smtp: {
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT || 587,
@@ -62,12 +75,143 @@ const emailConfig = {
 
 const emailTransporter = (() => {
   if (process.env.GMAIL_USER && process.env.GMAIL_PASSWORD) {
-    return nodemailer.createTransport(emailConfig.gmail);
+    // Force smtp.gmail.com:465 with TLS-on-connect (secure:true). This is the
+    // most reliable Gmail SMTP config and matches what nodemailer resolves the
+    // shortcut `service: 'gmail'` to anyway. We pin it explicitly so it's
+    // obvious in the code and the console. Tight timeouts make Render block
+    // failures show up in logs within ~10s rather than the 60s+ nodemailer
+    // default.
+    console.log(`[EMAIL] Gmail SMTP transporter enabled for ${process.env.GMAIL_USER} on smtp.gmail.com:465`);
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_PASSWORD
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 5000,
+      socketTimeout: 15000,
+      tls: {
+        minVersion: 'TLSv1.2',
+        rejectUnauthorized: process.env.GMAIL_TLS_REJECT_UNAUTHORIZED !== 'false'
+      }
+    });
   } else if (process.env.SMTP_HOST) {
     return nodemailer.createTransport(emailConfig.smtp);
   }
-  return null; // Email disabled if no config provided
+  return null; // Email disabled if nothing is configured (still allowed via HTTPS providers)
 })();
+
+// ============================================================
+// Gmail API via HTTPS — the ONLY real-Gmail delivery path that works on Render.
+//
+// Render (and Railway / Heroku free tier) block the raw SMTP ports Gmail uses,
+// so `GMAIL_USER + GMAIL_PASSWORD` will silently time out from a Render deploy.
+// The Gmail API uses gmail.googleapis.com over plain HTTPS, which Render never
+// blocks. We exchange a long-lived OAuth2 refresh token for a short access
+// token at send time, then POST the email to the REST endpoint. The sender
+// address is the Gmail account that owns the project's OAuth client.
+//
+// ONE-TIME SETUP (in your Google account / GCP project):
+//   1. Go to https://console.cloud.google.com and create a project.
+//   2. APIs & Services > Library > search "Gmail API" > Enable.
+//   3. APIs & Services > OAuth consent screen > External > fill in app name +
+//      your email > add your email under "Test users" > Save.
+//   4. APIs & Services > Credentials > Create Credentials > OAuth client ID >
+//      Application type = "Web application". Authorized redirect URI =
+//      http://localhost:3000 (we won't actually hit it from a browser, but
+//      Google requires one). Save and copy Client ID + Client Secret.
+//   5. Get a refresh token. Easiest path (run locally once):
+//        git clone this repo, then:
+//        npm i google-auth-library
+//        node -e "const {OAuth2Client}=require('google-auth-library'); \
+//          const o=new OAuth2Client( \
+//            process.env.GMAIL_CLIENT_ID,process.env.GMAIL_CLIENT_SECRET, \
+//            'http://localhost:3000'); \
+//          console.log(o.generateAuthUrl({ \
+//            access_type:'offline',prompt:'consent', \
+//            scope:['https://www.googleapis.com/auth/gmail.send']}))"
+//      Open the printed URL in a browser, sign in with the Gmail you want to
+//      send FROM, grant, get redirected to localhost with ?code=.... Then:
+//        node -e "const {OAuth2Client}=require('google-auth-library'); \
+//          const o=new OAuth2Client(process.env.GMAIL_CLIENT_ID, \
+//            process.env.GMAIL_CLIENT_SECRET,'http://localhost:3000'); \
+//          o.getToken('PASTE_CODE_HERE', (e,t)=>{ \
+//            if(e)return console.error(e);console.log(t.refresh_token);})"
+//   6. Set these Render env vars:
+//        GMAIL_CLIENT_ID       = ...apps.googleusercontent.com
+//        GMAIL_CLIENT_SECRET   = ...
+//        GMAIL_REFRESH_TOKEN   = the long refresh_token from step 5
+//        GMAIL_FROM_ADDRESS    = the Gmail address you granted in step 5
+//        EMAIL_FROM_NAME       = (optional) "UrMeeting"
+//
+// Returns true on success, null when not configured (lets callers fall
+// through), throws on failure (lets callers log the real error).
+async function sendViaGmailApi(toEmail, toName, subject, html) {
+  if (!process.env.GMAIL_REFRESH_TOKEN || !process.env.GMAIL_CLIENT_ID || !process.env.GMAIL_CLIENT_SECRET) {
+    return null; // not configured, caller will fall back to other providers
+  }
+  const fromEmail = process.env.GMAIL_FROM_ADDRESS || process.env.GMAIL_USER;
+  if (!fromEmail) {
+    throw new Error('GMAIL_FROM_ADDRESS is missing (the Gmail account that owns the refresh token).');
+  }
+  const fromName = process.env.EMAIL_FROM_NAME || 'UrMeeting';
+
+  // 1) Exchange refresh_token -> short-lived access_token via Google's HTTPS
+  //    OAuth2 endpoint. Plain fetch, no extra dependencies.
+  const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GMAIL_CLIENT_ID,
+      client_secret: process.env.GMAIL_CLIENT_SECRET,
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+      grant_type: 'refresh_token'
+    }).toString()
+  });
+  if (!tokenResp.ok) {
+    const errText = await tokenResp.text().catch(() => tokenResp.statusText);
+    throw new Error(`Gmail OAuth2 token exchange failed (${tokenResp.status}): ${errText}`);
+  }
+  const tokenBody = await tokenResp.json();
+  const accessToken = tokenBody.access_token;
+  if (!accessToken) {
+    throw new Error('Gmail OAuth2 token endpoint returned no access_token: ' + JSON.stringify(tokenBody));
+  }
+
+  // 2) Build a raw RFC822 message and base64url-encode it (Gmail's REST send
+  //    endpoint accepts any MIME-encodable content; raw is the most compatible).
+  const safeSubject = String(subject).replace(/\r?\n/g, ' ');
+  const headers = [
+    `From: ${fromName} <${fromEmail}>`,
+    `To: ${toName ? `${String(toName).replace(/[<>]/g, '')} <${toEmail}>` : toEmail}`,
+    `Subject: =?UTF-8?B?${Buffer.from(safeSubject, 'utf8').toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/html; charset=UTF-8'
+  ].join('\r\n');
+  const rawMessage = Buffer.from(headers + '\r\n\r\n' + html, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  // 3) POST to gmail.googleapis.com (HTTPS). Works on Render.
+  const sendResp = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ raw: rawMessage })
+  });
+  if (!sendResp.ok) {
+    const errText = await sendResp.text().catch(() => sendResp.statusText);
+    throw new Error(`Gmail API send failed (${sendResp.status}): ${errText}`);
+  }
+  return true;
+}
 
 // Railway (and many other PaaS hosts) block outbound SMTP ports (465/587) on
 // their network, which makes Gmail/SMTP nodemailer connections time out even
@@ -167,8 +311,14 @@ async function sendViaResend(participantEmail, subject, html) {
 }
 
 async function sendMeetingInviteEmail(participantEmail, participantName, meeting, creatorName) {
-  if (!process.env.BREVO_API_KEY && !process.env.SENDGRID_API_KEY && !process.env.RESEND_API_KEY && !emailTransporter) {
-    console.log('[EMAIL DISABLED] Configure BREVO_API_KEY, SENDGRID_API_KEY, or RESEND_API_KEY (all HTTPS-based, recommended on Railway), or GMAIL_USER/GMAIL_PASSWORD or SMTP_* env vars to enable emails.');
+  // Treat Gmail API (when configured) as a "provider" too, so this guard fires
+  // with the full list of HTTPS / Gmail paths you can enable.
+  const anyProvider = process.env.BREVO_API_KEY || process.env.SENDGRID_API_KEY
+    || process.env.RESEND_API_KEY || process.env.GMAIL_REFRESH_TOKEN
+    || (process.env.GMAIL_USER && process.env.GMAIL_PASSWORD)
+    || process.env.SMTP_HOST;
+  if (!anyProvider) {
+    console.log('[EMAIL DISABLED] No email provider configured. On Render, set GMAIL_REFRESH_TOKEN + GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_FROM_ADDRESS (true Gmail via HTTPS) OR BREVO_API_KEY + EMAIL_FROM (HTTPS, 300 free/day).');
     return false;
   }
 
@@ -176,7 +326,7 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
     <h2>You're invited to a meeting!</h2>
     <p>Hi ${participantName},</p>
     <p><strong>${creatorName}</strong> has invited you to a meeting:</p>
-    
+
     <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;">
       <h3 style="margin-top: 0;">${meeting.title}</h3>
       <p><strong>Description:</strong> ${meeting.description || '(No description provided)'}</p>
@@ -184,12 +334,12 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
       <p><strong>Time:</strong> ${meeting.time}</p>
       <p><strong>Organizer:</strong> ${creatorName}</p>
     </div>
-    
-    <p><a href="${process.env.APP_URL || 'http://localhost:3000'}/meeting-room.html?id=${meeting.id}" 
+
+    <p><a href="${process.env.APP_URL || 'http://localhost:3000'}/meeting-room.html?id=${meeting.id}"
          style="display: inline-block; background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">
       Join Meeting
     </a></p>
-    
+
     <p style="color: #666; font-size: 12px; margin-top: 32px;">
       This is an automated message from UrMeeting. Please do not reply to this email.
     </p>
@@ -197,8 +347,21 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
 
   const subject = `Meeting Invitation: ${meeting.title}`;
 
-  // Prefer Brevo (HTTPS-based) since Railway commonly blocks the raw SMTP
-  // ports (465/587) that Gmail/nodemailer need, causing "Connection timeout".
+  // 1) Gmail API (HTTPS, true Gmail delivery, works on Render). Checked first
+  //    because if it's set, that's almost certainly what the user wants on
+  //    Render and it bypasses the SMTP timeout trap entirely.
+  if (process.env.GMAIL_REFRESH_TOKEN) {
+    try {
+      await sendViaGmailApi(participantEmail, participantName, subject, emailContent);
+      console.log(`[EMAIL SENT via Gmail API] to ${participantEmail}`);
+      return true;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] Gmail API failed to send to ${participantEmail}:`, err.message);
+      console.error('[EMAIL HINT] Check GMAIL_REFRESH_TOKEN + GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_FROM_ADDRESS. The refresh token must be issued with access_type=offline + scope gmail.send.');
+    }
+  }
+
+  // 2) Brevo (HTTPS). Works on Render.
   if (process.env.BREVO_API_KEY) {
     try {
       await sendViaBrevo(participantEmail, participantName, subject, emailContent);
@@ -206,10 +369,10 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
       return true;
     } catch (err) {
       console.error(`[EMAIL ERROR] Brevo failed to send to ${participantEmail}:`, err.message);
-      // fall through to Resend/SMTP if configured, otherwise give up below
     }
   }
 
+  // 3) SendGrid (HTTPS). Works on Render.
   if (process.env.SENDGRID_API_KEY) {
     try {
       await sendViaSendGrid(participantEmail, participantName, subject, emailContent);
@@ -217,10 +380,10 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
       return true;
     } catch (err) {
       console.error(`[EMAIL ERROR] SendGrid failed to send to ${participantEmail}:`, err.message);
-      // fall through to Resend/SMTP if configured, otherwise give up below
     }
   }
 
+  // 4) Resend (HTTPS). Works on Render.
   if (process.env.RESEND_API_KEY) {
     try {
       await sendViaResend(participantEmail, subject, emailContent);
@@ -228,30 +391,42 @@ async function sendMeetingInviteEmail(participantEmail, participantName, meeting
       return true;
     } catch (err) {
       console.error(`[EMAIL ERROR] Resend failed to send to ${participantEmail}:`, err.message);
-      // fall through to SMTP if it's also configured, otherwise give up
       if (!emailTransporter) return false;
     }
   }
 
-  if (!emailTransporter) {
-    if (process.env.BREVO_API_KEY || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY) return false; // already tried and failed above
-    return false;
+  // 5) SMTP (Gmail on 465 OR generic SMTP_HOST). On Render this almost always
+  //    fails because Render blocks outbound SMTP. The transporter has tight
+  //    timeouts so the failure shows up quickly with a clear hint.
+  if (emailTransporter) {
+    try {
+      await emailTransporter.sendMail({
+        from: process.env.EMAIL_FROM || process.env.GMAIL_USER || process.env.SMTP_USER,
+        to: participantEmail,
+        subject,
+        html: emailContent
+      });
+      console.log(`[EMAIL SENT via SMTP] to ${participantEmail}`);
+      return true;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] SMTP failed to send to ${participantEmail}:`, err.message);
+      const msg = String(err && err.message || '');
+      if (/timeout|ETIMEDOUT|ENOTFOUND|ENETUNREACH|Connection.*closed|EHOSTUNREACH/i.test(msg)) {
+        console.error('[EMAIL HINT] Render/Railway/Heroku-free block outbound SMTP. Switch to GMAIL_REFRESH_TOKEN (true Gmail via HTTPS) or BREVO_API_KEY (HTTPS relay) — see README.');
+      } else if (/Invalid login|Username and Password not accepted|535|534/i.test(msg)) {
+        console.error('[EMAIL HINT] Gmail rejected the credentials. GMAIL_PASSWORD must be a 16-char App Password (Google Account > Security > 2-Step Verification > App passwords), NOT your normal Gmail password.');
+      } else if (/self.signed certificate|TLS/i.test(msg) && process.env.GMAIL_USER) {
+        console.error('[EMAIL HINT] TLS error to smtp.gmail.com. Try setting GMAIL_TLS_REJECT_UNAUTHORIZED=false or switching to GMAIL_REFRESH_TOKEN.');
+      }
+      return false;
+    }
   }
 
-  try {
-    await emailTransporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.GMAIL_USER || process.env.SMTP_USER,
-      to: participantEmail,
-      subject,
-      html: emailContent
-    });
-    console.log(`[EMAIL SENT via SMTP] to ${participantEmail}`);
-    return true;
-  } catch (err) {
-    console.error(`[EMAIL ERROR] SMTP failed to send to ${participantEmail}:`, err.message);
-    console.error('[EMAIL HINT] Railway often blocks outbound SMTP ports (465/587), causing "Connection timeout". Set BREVO_API_KEY instead (sends over HTTPS/443) - see README.');
+  // HTTPS providers were tried but all failed above.
+  if (process.env.BREVO_API_KEY || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY || process.env.GMAIL_REFRESH_TOKEN) {
     return false;
   }
+  return false;
 }
 
 app.use(bodyParser.json());
@@ -595,6 +770,46 @@ app.get('/api/meetings/:id', requireLogin, (req, res) => {
   if (!allowed) return res.status(403).json({ error: 'You are not invited to this meeting' });
 
   res.json({ meeting: enrichMeetings([meeting])[0] });
+});
+
+// ---------- Email diagnostic (super admin only) ----------
+// Sends a single test invitation without creating a fake meeting so you can
+// verify which provider your Render deploy is actually using. Look for the
+// `[EMAIL SENT via ...]` or `[EMAIL ERROR] ...` log lines in Render > Logs.
+//
+// Example (browser console / curl):
+//   curl -X POST https://your-app.onrender.com/api/test-email \
+//     -H 'Content-Type: application/json' \
+//     -b cookies.txt \
+//     -d '{"to":"you@gmail.com"}'
+app.post('/api/test-email', requireLogin, requireRole('superadmin'), async (req, res) => {
+  const to = (req.body && req.body.to) || (req.currentUser && req.currentUser.email);
+  if (!to) {
+    return res.status(400).json({ error: '`to` is required (or sign in with the email you want to test to)' });
+  }
+  try {
+    const ok = await sendMeetingInviteEmail(
+      to,
+      'Test Recipient',
+      {
+        id: 'test-msg-id',
+        title: 'UrMeeting test email',
+        description: 'Sent from POST /api/test-email. If you read this in your inbox, your Render deployment is correctly wired up.',
+        date: new Date().toISOString().slice(0, 10),
+        time: new Date().toISOString().slice(11, 16)
+      },
+      req.currentUser.name
+    );
+    res.json({
+      ok,
+      sent_to: to,
+      message: ok
+        ? `Email dispatched to ${to}. Look for "[EMAIL SENT via ...]" in Render logs to see which provider handled it. Recipient should see it in their inbox (check Spam).`
+        : `Email NOT sent to ${to}. Look at Render logs for the "[EMAIL ERROR] ..." line — the [EMAIL HINT] below it will tell you exactly which env vars to fix.`
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // ---------- Attendance tracking (used to build the deleted-meeting history) ----------
