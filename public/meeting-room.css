@@ -104,9 +104,44 @@
    theme-dark.png   = black moon (visible on light button bg) -> shown in light mode */
 .theme-toggle-btn .theme-icon-light,
 .theme-toggle-btn .theme-icon-dark { display: none; }
-.theme-light  .theme-toggle-btn .theme-icon-dark  { display: inline-block; }
-:not(.theme-light) .theme-toggle-btn .theme-icon-light { display: inline-block; }
+body.theme-light          .theme-toggle-btn .theme-icon-dark  { display: inline-block; }
+body:not(.theme-light)    .theme-toggle-btn .theme-icon-light { display: inline-block; }
+/* Mic & camera buttons: swap the white PNG for a dark one in light mode
+   so the icon stays visible on the white button background.
+   .icon-dark  = white variant (mic.png, camera.png)            -> default dark mode
+   .icon-light = black variant (mic-dark.png, camera-dark.png)  -> light mode only */
+.ctrl-btn .icon-light,
+.ctrl-btn .icon-dark { display: none; }
+body.theme-light       .ctrl-btn .icon-light { display: inline-block; }
+body:not(.theme-light) .ctrl-btn .icon-dark  { display: inline-block; }
 
+/* ============================================================
+   LIGHT-THEME CAMERA-OFF PLACEHOLDER
+   The default cam-off background uses a dark blue gradient
+   (#1b2238 -> #0c1020) which clashes badly against the light
+   surfaces. Override it for .theme-light so the placeholder
+   looks like part of the light UI; the dark-mode look is
+   intentionally left untouched.
+   ============================================================ */
+.theme-light .video-tile.cam-off,
+.theme-light .lobby-preview.cam-off {
+  background: linear-gradient(160deg, #ffffff 0%, #e2e8f0 100%);
+  border: 1px solid rgba(15,23,42,0.10);
+  box-shadow: 0 10px 30px -12px rgba(15,23,42,0.18);
+}
+.theme-light .video-tile.cam-off .avatar-fallback,
+.theme-light .lobby-preview.cam-off .avatar-fallback {
+  background: linear-gradient(160deg, #ffffff 0%, #e2e8f0 100%);
+}
+.theme-light .video-tile.cam-off .avatar-circle,
+.theme-light .lobby-preview.cam-off .avatar-circle {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: #ffffff;
+  box-shadow: 0 0 0 4px rgba(99,102,241,0.20), 0 12px 30px -8px rgba(99,102,241,0.35);
+}
+/* "Camera off" badge text (if rendered) reads better on the light card */
+.theme-light .video-tile .off-badge,
+.theme-light .lobby-preview .off-badge { color: #475569; background: rgba(15,23,42,0.06); }
 * { box-sizing: border-box; }
 
 html, body {
