@@ -8,7 +8,6 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
@@ -17,6 +16,8 @@ const fs = require('fs');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
 const db = require('./db');
+// Stateless, signed-cookie auth — survives Render restarts/redeploys/sleeps.
+const auth = require('./auth');
 
 const app = express();
 app.set('trust proxy', 1); // we run behind Railway/Render's HTTPS-terminating reverse proxy
@@ -435,34 +436,52 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ---------- Session store ----------
-// Previously sessions lived only in express-session's default MemoryStore,
-// which is wiped out every time the Node process restarts. Railway restarts
-// (or sleeps/redeploys) the container far more often than a long-lived VM
-// would, so every restart silently logged everyone out even though their
-// cookie was still valid. Persisting sessions to disk (ideally on the same
-// persistent volume as DATA_DIR/db.json) means a restart no longer forces
-// a fresh login. The cookie itself is also extended to 30 days and set to
-// "rolling" so it renews on every request instead of hard-expiring at a
-// fixed 8-hour mark while someone is still actively using the app.
-const SESSIONS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'sessions');
-fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+// Render's Web Services (especially the free tier) wipe their filesystem on
+// every restart, redeploy and sleep cycle, so any on-disk session store would
+// vanish and log everyone out — even though their cookie is still in the
+// browser. We therefore use a STATELESS auth model: the durable `urmeeting_token`
+// cookie is an HMAC-signed token containing { userId, exp }; the server only
+// needs to verify the signature. express-session is still wired up (so every
+// `req.session.userId` check in the existing routes keeps working), but the
+// userId is RE-SEEDED from the durable cookie on every request via the
+// rehydrateAuth() middleware below. The same cookie is automatically shared
+// with any new window the user opens on this origin, so they stay logged in
+// across windows, browser restarts, server restarts and redeploys.
+const SESSION_SECRET = process.env.SESSION_SECRET || 'meeting-platform-secret-change-me';
 
 const sessionMiddleware = session({
-  store: new FileStore({ path: SESSIONS_DIR, logFn: () => {} }),
-  secret: process.env.SESSION_SECRET || 'meeting-platform-secret-change-me',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   rolling: true, // refresh the cookie's expiry on every request while the user is active
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-    secure: process.env.NODE_ENV === 'production', // HTTPS-only in prod (trust proxy reads X-Forwarded-Proto)
+    maxAge: auth.DEFAULT_MAX_AGE_MS,                 // 30 days
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',  // HTTPS-only in prod (trust proxy reads X-Forwarded-Proto)
     sameSite: 'lax'
   }
 });
 app.use(sessionMiddleware);
-// Socket.IO must read the same signed-in session as the HTTP API. This prevents
+
+// Re-seed `req.session.userId` from the durable `urmeeting_token` cookie on
+// every request. Runs AFTER sessionMiddleware so `req.session` exists, but
+// BEFORE any route that reads `req.session.userId`.
+function rehydrateAuth(req, _res, next) {
+  const token = auth.readCookie(req, auth.COOKIE_NAME);
+  if (token) {
+    const payload = auth.verifyToken(token, SESSION_SECRET);
+    if (payload && payload.userId) {
+      req.session.userId = payload.userId;
+    }
+  }
+  next();
+}
+app.use(rehydrateAuth);
+// Socket.IO must read the same signed-in identity as the HTTP API. This prevents
 // a client from claiming another user's ID when joining or moderating a room.
+// Both middlewares run in order on every engine.io handshake.
 io.engine.use(sessionMiddleware);
+io.engine.use(rehydrateAuth);
 
 // ---------- Helpers ----------
 function sanitizeUser(u) {
@@ -497,10 +516,28 @@ app.post('/api/login', (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
 
   req.session.userId = user.id;
+
+  // Issue a 30-day signed auth token so the user stays logged in across
+  // browser windows, browser restarts, server restarts and Render redeploys.
+  const token = auth.signToken(
+    { userId: user.id, exp: Date.now() + auth.DEFAULT_MAX_AGE_MS },
+    SESSION_SECRET
+  );
+  res.append(
+    'Set-Cookie',
+    auth.buildSetCookie(auth.COOKIE_NAME, token, {
+      httpOnly: true,
+      secure:   process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge:   auth.DEFAULT_MAX_AGE_MS
+    })
+  );
+
   res.json({ user: sanitizeUser(user) });
 });
 
 app.post('/api/logout', (req, res) => {
+  res.append('Set-Cookie', auth.buildClearCookie(auth.COOKIE_NAME));
   req.session.destroy(() => res.json({ ok: true }));
 });
 
